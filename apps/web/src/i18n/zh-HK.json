@@ -237,7 +237,8 @@
       "gold": "黃金",
       "diamond": "鑽石",
       "xueshen": "學神 Xueshen"
-    }
+    },
+    "runFirstAudit": "執行你的首次技術官僚審計"
   },
   "palace": {
     "builder": {

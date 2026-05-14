@@ -237,7 +237,8 @@
       "gold": "Gold",
       "diamond": "Diamond",
       "xueshen": "學神 Xueshen"
-    }
+    },
+    "runFirstAudit": "Run your first technocratic audit"
   },
   "palace": {
     "builder": {

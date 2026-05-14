@@ -232,31 +232,41 @@ export default function Dashboard() {
         {/* Main content area */}
         <div className="lg:col-span-2 space-y-8">
           {/* Audit Reminder Banner */}
-          {daysSinceAudit !== null && daysSinceAudit >= 3 && (
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-            >
-              <Card className="bg-amber-900/20 border-amber-500/20">
-                <CardContent className="py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+          >
+            <Card className={daysSinceAudit !== null && daysSinceAudit >= 3
+              ? 'bg-amber-900/20 border-amber-500/20'
+              : 'bg-indigo-900/20 border-indigo-500/20'
+            }>
+              <CardContent className="py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {daysSinceAudit !== null && daysSinceAudit >= 3 ? (
                       <AlertTriangle size={18} className="text-amber-400" />
-                      <div>
-                        <p className="text-sm text-amber-300 font-medium">
-                          {daysSinceAudit} {t('dashboard.auditReminder')}
-                        </p>
-                        <p className="text-xs text-amber-400/70">{t('dashboard.auditReminderCTA')}</p>
-                      </div>
+                    ) : (
+                      <Target size={18} className="text-indigo-400" />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium" style={{
+                        color: daysSinceAudit !== null && daysSinceAudit >= 3 ? '#fcd34d' : '#a5b4fc'
+                      }}>
+                        {daysSinceAudit !== null && daysSinceAudit >= 3
+                          ? `${daysSinceAudit} ${t('dashboard.auditReminder')}`
+                          : t('dashboard.runFirstAudit')
+                        }
+                      </p>
+                      <p className="text-xs text-slate-400">{t('dashboard.auditReminderCTA')}</p>
                     </div>
-                    <Button size="sm" onClick={() => navigate('/technocratic')}>
-                      <Target size={14} className="mr-1" /> Audit Now
-                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
+                  <Button size="sm" onClick={() => navigate('/technocratic')}>
+                    <Target size={14} className="mr-1" /> Audit Now
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
 
           {/* Method Experiment Card */}
           <Card className="bg-gradient-to-r from-indigo-900/30 to-violet-900/30 border-indigo-500/20">
