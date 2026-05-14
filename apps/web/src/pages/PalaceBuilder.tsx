@@ -6,7 +6,6 @@ import {
   Home, School, Castle, Gamepad2, PenTool,
   ArrowLeft, ArrowRight, Wand2, Check, Loader2,
 } from 'lucide-react';
-import { useAuth } from '@clerk/clerk-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input, Textarea } from '@/components/ui/input';
@@ -14,9 +13,8 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { parseDocx, parsePptx } from '@/lib/fileParser';
+import { api } from '@/lib/api';
 import toast from 'react-hot-toast';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'https://api.xuebaos.com';
 
 const templates = [
   { id: 'childhoodHome', icon: Home, color: 'from-blue-500 to-cyan-500' },
@@ -39,7 +37,6 @@ interface Locus {
 export default function PalaceBuilder() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { getToken } = useAuth();
   const [step, setStep] = useState(1);
   const [template, setTemplate] = useState<string | null>(null);
   const [content, setContent] = useState('');
@@ -64,29 +61,12 @@ export default function PalaceBuilder() {
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const token = await getToken();
-
-      // Send raw text as a single concept — backend detects long text
-      // and uses DeepSeek to extract concepts from the full text
-      const resp = await fetch(`${API_BASE}/api/ai/generate-palace`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          topic: subject || 'Study Material',
-          concepts: [content],
-          count: 20,
-        }),
+      const data = await api.post<{ loci: any[] }>('/ai/generate-palace', {
+        topic: subject || 'Study Material',
+        concepts: [content],
+        count: 20,
       });
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-        throw new Error(err.error || err.details || `API error: ${resp.status}`);
-      }
-
-      const data = await resp.json();
       const generatedLoci: Locus[] = (data.loci || []).map((l: any) => ({
         concept: l.concept || '',
         description: l.description || l.locusName || '',
@@ -108,29 +88,18 @@ export default function PalaceBuilder() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const token = await getToken();
-      const resp = await fetch(`${API_BASE}/api/palaces`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: palaceName,
-          description: description || `A ${template} memory palace`,
-          subject: subject || undefined,
-          lociCount: loci.length,
-          loci: loci.map((l, i) => ({
-            concept: l.concept,
-            description: l.description,
-            mnemonic: l.mnemonic,
-          })),
-          tags: [template, subject].filter(Boolean),
-        }),
+      await api.post('/palaces', {
+        name: palaceName,
+        description: description || `A ${template} memory palace`,
+        subject: subject || undefined,
+        lociCount: loci.length,
+        loci: loci.map((l) => ({
+          concept: l.concept,
+          description: l.description,
+          mnemonic: l.mnemonic,
+        })),
+        tags: [template, subject].filter(Boolean),
       });
-
-      if (!resp.ok) throw new Error(`Save failed: ${resp.status}`);
-
       toast.success('Palace saved!');
       navigate('/palaces');
     } catch (err) {
