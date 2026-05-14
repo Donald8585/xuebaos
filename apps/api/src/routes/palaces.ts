@@ -16,6 +16,11 @@ const createPalaceSchema = z.object({
   description: z.string().optional(),
   subject: z.string().optional(),
   lociCount: z.number().int().min(0).optional(),
+  loci: z.array(z.object({
+    concept: z.string(),
+    description: z.string().optional(),
+    mnemonic: z.string().optional(),
+  })).optional(),
   imageUrl: z.string().url().optional(),
   isPublic: z.boolean().optional(),
   tags: z.array(z.string()).optional(),
@@ -149,7 +154,18 @@ palaces.get("/:id", async (c) => {
     return c.json({ error: "Not authorized" }, 403);
   }
 
-  return c.json(palace);
+  return c.json({
+    id: palace.id,
+    name: palace.name,
+    title: palace.name,
+    description: palace.description || '',
+    subject: palace.subject || '',
+    lociCount: palace.lociCount || 0,
+    loci: palace.loci || [],
+    isPublic: !!palace.isPublic,
+    tags: Array.isArray(palace.tags) ? palace.tags : [],
+    created_at: palace.createdAt ? new Date(palace.createdAt).toISOString() : '',
+  });
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -168,7 +184,8 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), zValidator("json", crea
     name: body.name,
     description: body.description ?? null,
     subject: body.subject ?? null,
-    lociCount: body.lociCount ?? 0,
+    lociCount: body.loci?.length ?? body.lociCount ?? 0,
+    loci: body.loci ?? [],
     imageUrl: body.imageUrl ?? null,
     isPublic: body.isPublic ?? false,
     tags: body.tags ?? [],

@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Lightbulb, Eye, EyeOff } from 'lucide-react';
 
 interface LocusData {
-  id: string;
+  id?: string;
   concept: string;
   description: string;
   mnemonic: string;

@@ -58,12 +58,9 @@ export default function PalaceBuilder() {
     setIsGenerating(true);
     try {
       const token = await getToken();
-      const concepts = content
-        .split(/[\n,.]+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 3)
-        .slice(0, 50);
 
+      // Send raw text as a single concept — backend detects long text
+      // and uses DeepSeek to extract concepts from the full text
       const resp = await fetch('/api/ai/generate-palace', {
         method: 'POST',
         headers: {
@@ -72,21 +69,24 @@ export default function PalaceBuilder() {
         },
         body: JSON.stringify({
           topic: subject || 'Study Material',
-          concepts,
-          count: Math.min(concepts.length, 30),
+          concepts: [content],
+          count: 20,
         }),
       });
 
-      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(err.error || err.details || `API error: ${resp.status}`);
+      }
 
       const data = await resp.json();
       const generatedLoci: Locus[] = (data.loci || []).map((l: any) => ({
-        concept: l.concept || l.concept || '',
+        concept: l.concept || '',
         description: l.description || l.locusName || '',
         mnemonic: l.association || '',
       }));
 
-      if (generatedLoci.length === 0) throw new Error('No concepts extracted');
+      if (generatedLoci.length === 0) throw new Error('No concepts extracted — try pasting more text');
 
       setLoci(generatedLoci);
       setStep(3);
@@ -113,6 +113,11 @@ export default function PalaceBuilder() {
           description: description || `A ${template} memory palace`,
           subject: subject || undefined,
           lociCount: loci.length,
+          loci: loci.map((l, i) => ({
+            concept: l.concept,
+            description: l.description,
+            mnemonic: l.mnemonic,
+          })),
           tags: [template, subject].filter(Boolean),
         }),
       });

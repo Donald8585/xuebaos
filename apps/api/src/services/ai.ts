@@ -52,6 +52,32 @@ export async function deepseekChat(
 // Prompt Templates
 // ══════════════════════════════════════════════════════════════════
 
+const GENERATE_PALACE_FROM_TEXT_PROMPT = `You are a master of the Method of Loci. Given raw study text, extract key concepts and build a detailed memory palace.
+
+STEP 1: Extract 5-20 key concepts from the text. Focus on important terms, definitions, processes, and relationships.
+
+STEP 2: For each concept, create a vivid locus in a virtual journey. Each locus must have:
+- concept: the original concept name (exact term from the text)
+- locusName: a specific, memorable location in the spatial sequence
+- position: sequential number starting at 1
+- description: rich sensory details (visual, sound, smell, tactile)
+- association: how to vividly link the locus to the concept using absurd/emotional imagery
+
+Return ONLY valid JSON. No prose, no markdown, no explanation. JSON ONLY:
+{
+  "palaceName": "string (creative name based on topic)",
+  "description": "string (theme/setting of the palace)",
+  "loci": [
+    {
+      "concept": "string (exact concept from text)",
+      "locusName": "string (memorable location name)",
+      "position": number,
+      "description": "string (sensory-rich spatial description)",
+      "association": "string (absurd/emotional mnemonic link)"
+    }
+  ]
+}`;
+
 const GENERATE_PALACE_PROMPT = `You are a master of the Method of Loci. Given a topic and list of concepts, generate a detailed memory palace.
 
 For each concept, create a vivid location ("locus") in a virtual journey. Each locus should:
@@ -282,7 +308,17 @@ export async function generatePalace(
   concepts: string[],
   count?: number
 ) {
-  const prompt = `${GENERATE_PALACE_PROMPT}
+  // If concepts look like raw text (>200 chars total), send as full text extraction
+  const isRawText = concepts.length <= 5 && concepts.some(c => c.length > 40);
+  
+  const prompt = isRawText
+    ? `${GENERATE_PALACE_FROM_TEXT_PROMPT}
+
+Subject/Topic: ${topic}
+Source Text:
+${concepts.join("\n")}
+${count ? `\nTarget loci count: ${count}` : ""}`
+    : `${GENERATE_PALACE_PROMPT}
 
 Topic: ${topic}
 Concepts: ${concepts.join(", ")}
@@ -291,7 +327,19 @@ ${count ? `Number of loci requested: ${count}` : ""}`;
   const result = await deepseekChat(env, [
     { role: "user", content: prompt },
   ]);
-  return JSON.parse(result);
+
+  // Strip markdown code fences if present
+  let json = result.trim();
+  if (json.startsWith("```")) {
+    json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
+  try {
+    return JSON.parse(json);
+  } catch (parseErr) {
+    console.error("DeepSeek JSON parse failed", { rawResponse: result.slice(0, 500), error: String(parseErr) });
+    throw new Error(`DeepSeek returned non-JSON: ${result.slice(0, 200)}`);
+  }
 }
 
 export async function generateStory(

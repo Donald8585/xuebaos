@@ -29,6 +29,7 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
   description: text("description"),
   subject: text("subject"),
   lociCount: integer("loci_count").default(0),
+  loci: text("loci", { mode: "json" }).$type<LocusData[]>().default([]),
   imageUrl: text("image_url"),
   isPublic: integer("is_public", { mode: "boolean" }).default(false),
   tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
@@ -39,6 +40,13 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+export interface LocusData {
+  concept: string;
+  description: string;
+  mnemonic: string;
+  position?: number;
+}
 
 // ── Mnemonic Stories ───────────────────────────────────────────────
 export const mnemonicStories = sqliteTable("mnemonic_stories", {
