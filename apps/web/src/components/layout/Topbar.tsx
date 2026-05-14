@@ -26,7 +26,7 @@ export function Topbar() {
           </button>
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold text-sm">
-              SG
+              學
             </div>
             <span className="text-lg font-bold gradient-text hidden sm:block">
               XueBaOS
