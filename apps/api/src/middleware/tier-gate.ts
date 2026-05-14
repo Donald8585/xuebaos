@@ -1,0 +1,203 @@
+import type { Context } from "hono";
+import type { Env } from "../index";
+import { PRICING_TIERS, type TierKey } from "../services/stripe";
+
+/**
+ * Tier gating middleware — enforce subscription limits across all endpoints.
+ * 
+ * Usage:
+ *   import { requireTier, checkLimit } from "../middleware/tier-gate";
+ *   
+ *   // Require specific tier for premium features
+ *   palaces.post("/", authMiddleware, requireTier("xueba"), ...);
+ *   
+ *   // Check resource-specific limits
+ *   palaces.post("/", authMiddleware, checkLimit("palaces"), ...);
+ */
+
+/** Feature flags per tier — what each tier unlocks */
+export const TIER_FEATURES: Record<TierKey, {
+  imageGeneration: boolean;
+  audioNarration: boolean;
+  priorityAI: boolean;
+  exportReports: boolean;
+  customTemplates: boolean;
+  aiChat: boolean;
+}> = {
+  free: {
+    imageGeneration: false,
+    audioNarration: false,
+    priorityAI: false,
+    exportReports: false,
+    customTemplates: false,
+    aiChat: false,
+  },
+  xueba: {
+    imageGeneration: false,
+    audioNarration: false,
+    priorityAI: false,
+    exportReports: false,
+    customTemplates: false,
+    aiChat: true,
+  },
+  xueshen: {
+    imageGeneration: true,
+    audioNarration: true,
+    priorityAI: true,
+    exportReports: true,
+    customTemplates: true,
+    aiChat: true,
+  },
+};
+
+export function getTierFeatures(tier: string): typeof TIER_FEATURES.xueba {
+  return TIER_FEATURES[tier as TierKey] || TIER_FEATURES.free;
+}
+
+export function getTierLimits(tier: string) {
+  return PRICING_TIERS[tier as TierKey] || PRICING_TIERS.free;
+}
+
+/**
+ * Middleware: require minimum tier level
+ * Passes after checking user has at least the specified tier
+ */
+export function requireTier(minTier: TierKey) {
+  const tierOrder: TierKey[] = ["free", "xueba", "xueshen"];
+
+  return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
+    const internalUserId = c.get("internalUserId");
+    const db = c.get("db");
+
+    const user = await db.query.users.findFirst({
+      where: (u: any, { eq }: any) => eq(u.id, internalUserId),
+    });
+
+    const userTier = (user?.subscriptionTier || "free") as TierKey;
+    const hasActiveSub = user?.subscriptionEnds
+      ? new Date(user.subscriptionEnds) > new Date()
+      : false;
+
+    // Treat expired subs as free
+    const effectiveTier = hasActiveSub ? userTier : "free";
+
+    if (tierOrder.indexOf(effectiveTier) < tierOrder.indexOf(minTier)) {
+      return c.json({
+        error: `This feature requires ${minTier} tier or higher.`,
+        currentTier: effectiveTier,
+        requiredTier: minTier,
+        upgradeUrl: "/pricing",
+      }, 402);
+    }
+
+    c.set("userTier", effectiveTier);
+    await next();
+  };
+}
+
+/**
+ * Middleware: check feature flag access
+ * Example: requireFeature("imageGeneration") → xueshen only
+ */
+export function requireFeature(feature: keyof typeof TIER_FEATURES.xueba) {
+  return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
+    const internalUserId = c.get("internalUserId");
+    const db = c.get("db");
+
+    const user = await db.query.users.findFirst({
+      where: (u: any, { eq }: any) => eq(u.id, internalUserId),
+    });
+
+    const userTier = (user?.subscriptionTier || "free") as TierKey;
+    const hasActiveSub = user?.subscriptionEnds
+      ? new Date(user.subscriptionEnds) > new Date()
+      : false;
+
+    const effectiveTier: TierKey = hasActiveSub ? userTier : "free";
+    const features = TIER_FEATURES[effectiveTier] || TIER_FEATURES.free;
+
+    if (!features[feature]) {
+      return c.json({
+        error: `"${feature}" is only available on the xueshen tier.`,
+        currentTier: effectiveTier,
+        upgradeUrl: "/pricing",
+      }, 402);
+    }
+
+    c.set("userTier", effectiveTier);
+    await next();
+  };
+}
+
+/**
+ * Middleware: check resource count against tier limits
+ * Example: checkLimit("palaces") → checks user hasn't exceeded maxPalaces
+ */
+type ResourceType = "palaces" | "stories" | "questions";
+
+export function checkLimit(resource: ResourceType) {
+  const limitKey = resource === "palaces"
+    ? "maxPalaces"
+    : resource === "stories"
+    ? "maxStories"
+    : "maxQuestions";
+
+  const tableMap: Record<ResourceType, { table: string; userCol: string }> = {
+    palaces: { table: "memoryPalaces", userCol: "userId" },
+    stories: { table: "mnemonicStories", userCol: "userId" },
+    questions: { table: "questions", userCol: "userId" },
+  };
+
+  return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
+    const internalUserId = c.get("internalUserId");
+    const db = c.get("db");
+
+    const user = await db.query.users.findFirst({
+      where: (u: any, { eq }: any) => eq(u.id, internalUserId),
+    });
+
+    const userTier = (user?.subscriptionTier || "free") as TierKey;
+    const hasActiveSub = user?.subscriptionEnds
+      ? new Date(user.subscriptionEnds) > new Date()
+      : false;
+
+    const effectiveTier: TierKey = hasActiveSub ? userTier : "free";
+    const limits = PRICING_TIERS[effectiveTier];
+    const maxAllowed = limits[limitKey];
+
+    // Infinity = unlimited
+    if (maxAllowed === Infinity) {
+      c.set("userTier", effectiveTier);
+      await next();
+      return;
+    }
+
+    // Count current resources (this month for questions)
+    const { table, userCol } = tableMap[resource];
+    const allResources = await db.select().from(db.schema[table])
+      .where((u: any, { eq }: any) => eq(u[userCol], internalUserId));
+
+    let count = allResources.length;
+    if (resource === "questions") {
+      // Only count questions created this month
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      count = allResources.filter((q: any) =>
+        q.createdAt && new Date(q.createdAt) >= monthStart
+      ).length;
+    }
+
+    if (count >= maxAllowed) {
+      return c.json({
+        error: `You've reached the ${effectiveTier} tier limit of ${maxAllowed} ${resource}.`,
+        currentTier: effectiveTier,
+        limit: maxAllowed,
+        currentCount: count,
+        upgradeUrl: "/pricing",
+      }, 402);
+    }
+
+    c.set("userTier", effectiveTier);
+    await next();
+  };
+}
