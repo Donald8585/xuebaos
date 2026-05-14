@@ -18,6 +18,7 @@ import annotationRoutes from "./routes/annotations";
 import readingVaultRoutes from "./routes/reading-vault";
 import recallArenaRoutes from "./routes/recall-arena";
 import technocraticRoutes from "./routes/technocratic";
+import statsRoutes from "./routes/stats";
 import clerkWebhookRoutes from "./routes/clerk-webhook";
 
 // ── Services ────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ app.route("/api/stories", storyRoutes);
 app.route("/api/symbols", symbolRoutes);
 app.route("/api/sessions", sessionRoutes);
 app.route("/api/timetables", timetableRoutes);
+app.route("/api/timetable", timetableRoutes); // singular alias for frontend
 app.route("/api/qbank", qbankRoutes);
 app.route("/api/ai", aiRoutes);
 app.route("/api/payments", paymentRoutes);
@@ -115,6 +117,7 @@ app.route("/api/annotations", annotationRoutes);
 app.route("/api/reading-vault", readingVaultRoutes);
 app.route("/api/recall-arena", recallArenaRoutes);
 app.route("/api/technocratic", technocraticRoutes);
+app.route("/api/stats", statsRoutes);
 app.route("/api/clerk", clerkWebhookRoutes);
 
 // ════════════════════════════════════════════════════════════════
