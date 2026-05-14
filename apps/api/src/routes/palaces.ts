@@ -60,8 +60,25 @@ palaces.get("/", authMiddleware, zValidator("query", paginationSchema), async (c
 
   const total = countResult[0]?.count ?? 0;
 
+  // Transform to frontend-compatible format
+  const palaces = results.map((p: any) => ({
+    id: p.id,
+    title: p.name,
+    name: p.name,
+    description: p.description || '',
+    subject: p.subject || '',
+    loci_count: p.lociCount || 0,
+    lociCount: p.lociCount || 0,
+    is_published: !!p.isPublic,
+    isPublic: !!p.isPublic,
+    tags: Array.isArray(p.tags) ? p.tags : [],
+    created_at: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+    updated_at: p.updatedAt ? new Date(p.updatedAt).toISOString() : new Date().toISOString(),
+    last_studied_at: null,
+  }));
+
   return c.json({
-    data: results,
+    data: palaces,
     pagination: {
       page,
       limit,

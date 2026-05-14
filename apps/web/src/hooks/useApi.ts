@@ -6,14 +6,20 @@ import toast from 'react-hot-toast';
 
 export interface Palace {
   id: string;
+  name: string;
   title: string;
   description: string;
-  template: string;
+  subject?: string;
+  lociCount: number;
   loci_count: number;
-  thumbnail_url?: string;
+  imageUrl?: string;
+  isPublic: boolean;
   is_published: boolean;
+  tags: string[];
   created_at: string;
+  createdAt: string;
   updated_at: string;
+  updatedAt: string;
   last_studied_at?: string;
 }
 
@@ -100,7 +106,10 @@ export interface StudyStats {
 export function usePalaces() {
   return useQuery<Palace[]>({
     queryKey: ['palaces'],
-    queryFn: () => api.get('/palaces'),
+    queryFn: async () => {
+      const resp = await api.get<{ data: Palace[] }>('/palaces');
+      return (resp as any).data || resp;
+    },
   });
 }
 
