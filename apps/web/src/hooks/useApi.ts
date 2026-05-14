@@ -90,6 +90,7 @@ export interface StudyStats {
   streak_days: number;
   longest_streak: number;
   saturation_level: number;
+  last_audit_at?: string;
   weekly_activity: { date: string; minutes: number }[];
   topic_mastery: { topic: string; mastery: number }[];
 }

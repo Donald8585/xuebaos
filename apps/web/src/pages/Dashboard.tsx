@@ -148,7 +148,7 @@ export default function Dashboard() {
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyPrinciple = DAILY_PRINCIPLES[dayOfYear % DAILY_PRINCIPLES.length];
 
-  // Mock rank (would be calculated from stats in real app)
+  // Rank calculated from actual streak
   const rank: StudyRank = stats ? (
     stats.streak_days >= 30 ? 'xueshen' :
     stats.streak_days >= 21 ? 'diamond' :
@@ -156,8 +156,10 @@ export default function Dashboard() {
     stats.streak_days >= 7 ? 'silver' : 'bronze'
   ) : 'bronze';
 
-  // Mock audit days
-  const daysSinceAudit = 3;
+  // Audit days from real stats — only show if audits exist
+  const daysSinceAudit = stats?.last_audit_at
+    ? Math.floor((Date.now() - new Date(stats.last_audit_at).getTime()) / 86400000)
+    : null;
 
   return (
     <motion.div
@@ -230,7 +232,7 @@ export default function Dashboard() {
         {/* Main content area */}
         <div className="lg:col-span-2 space-y-8">
           {/* Audit Reminder Banner */}
-          {daysSinceAudit >= 3 && (
+          {daysSinceAudit !== null && daysSinceAudit >= 3 && (
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -536,7 +538,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-sm font-medium text-white">{t('dashboard.methodAuditHistory')}</p>
                   <p className="text-xs text-slate-400">
-                    {daysSinceAudit} {t('dashboard.auditReminder')} · View all audits
+                    {daysSinceAudit !== null ? `${daysSinceAudit} ${t('dashboard.auditReminder')} · ` : ''}View all audits
                   </p>
                 </div>
               </div>
