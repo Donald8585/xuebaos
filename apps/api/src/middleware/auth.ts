@@ -71,9 +71,18 @@ export async function authMiddleware(
     }
 
     await next();
-  } catch (err) {
-    console.error("Auth error:", err);
-    return c.json({ error: "Authentication failed" }, 401);
+  } catch (err: any) {
+    console.error('[CLERK_AUTH_DEBUG]', JSON.stringify({
+      message: err?.message,
+      name: err?.name,
+      reason: err?.reason,
+      status: err?.status,
+      stack: err?.stack?.slice(0, 300),
+    }));
+    return c.json({
+      error: 'Authentication failed',
+      debug: err?.message || 'Unknown error',
+    }, 401);
   }
 }
 
@@ -121,7 +130,9 @@ export async function optionalAuth(
 async function verifyClerkJWT(env: Env, token: string): Promise<{ sub: string; email?: string }> {
   // Clerk session tokens look like JWTs but use a custom signing mechanism.
   // The only reliable way to verify them is Clerk's own tokens/verify endpoint.
-  const resp = await fetch("https://api.clerk.com/v1/tokens/verify", {
+  // Try instance-specific endpoint first (works with custom Clerk domains)
+  const verifyUrl = "https://clerk.xuebaos.com/v1/tokens/verify";
+  const resp = await fetch(verifyUrl, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.CLERK_SECRET_KEY}`,
@@ -132,6 +143,7 @@ async function verifyClerkJWT(env: Env, token: string): Promise<{ sub: string; e
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "unknown");
+    console.error('[CLERK_VERIFY_FAIL]', JSON.stringify({ status: resp.status, body: errText.slice(0, 300), tokenPreview: token.slice(0, 20) + '...' }));
     throw new Error(`Clerk token verification failed (${resp.status}): ${errText.slice(0, 200)}`);
   }
 
@@ -149,7 +161,7 @@ async function verifyClerkJWT(env: Env, token: string): Promise<{ sub: string; e
   // Fetch email from Clerk for founder detection
   let email: string | undefined;
   try {
-    const userResp = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+    const userResp = await fetch(`https://clerk.xuebaos.com/v1/users/${userId}`, {
       headers: { Authorization: `Bearer ${env.CLERK_SECRET_KEY}` },
     });
     if (userResp.ok) {
