@@ -135,8 +135,9 @@ async function verifyClerkJWT(env: Env, token: string): Promise<{ sub: string; e
     throw new Error("Token expired");
   }
 
-  // Fetch JWKS from Clerk
-  const jwksUrl = env.CLERK_JWKS_URL || "https://api.clerk.com/v1/jwks";
+  // Fetch JWKS from Clerk — derive from token issuer or use env override
+  const issuer = payload.iss || "https://clerk.xuebaos.com";
+  const jwksUrl = env.CLERK_JWKS_URL || `${issuer}/.well-known/jwks.json`;
   const jwksResp = await fetch(jwksUrl);
 
   if (!jwksResp.ok) {
