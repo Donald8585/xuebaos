@@ -28,6 +28,7 @@ const ReadingVault = lazy(() => import('./pages/ReadingVault'));
 const ConceptChain = lazy(() => import('./pages/ConceptChain'));
 const TechnocraticDashboard = lazy(() => import('./pages/TechnocraticDashboard'));
 const XuebaCodex = lazy(() => import('./pages/XuebaCodex'));
+const AbbreviationTool = lazy(() => import('./pages/AbbreviationTool'));
 const XuebaChat = lazy(() => import('./pages/XuebaChat'));
 
 function PageLoader() {
@@ -227,6 +228,16 @@ function AnimatedRoutes() {
               <AuthGuard>
                 <AppShell>
                   <XuebaCodex />
+                </AppShell>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/abbreviations"
+            element={
+              <AuthGuard>
+                <AppShell>
+                  <AbbreviationTool />
                 </AppShell>
               </AuthGuard>
             }

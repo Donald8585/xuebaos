@@ -16,6 +16,7 @@ import {
   Plus,
   MessageCircle,
   BookMarked,
+  Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/stores/appStore';
@@ -32,6 +33,7 @@ const navItems = [
   { icon: BarChart3, label: 'analytics', path: '/analytics' },
   { icon: MessageCircle, label: 'chat', path: '/chat' },
   { icon: BookMarked, label: 'codex', path: '/codex' },
+  { icon: Link2, label: 'abbreviations', path: '/abbreviations' },
   { icon: Settings, label: 'settings', path: '/settings' },
 ];
 
