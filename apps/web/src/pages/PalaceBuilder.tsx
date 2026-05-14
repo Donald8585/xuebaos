@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils';
 import { parseDocx, parsePptx } from '@/lib/fileParser';
 import toast from 'react-hot-toast';
 
+const API_BASE = import.meta.env.VITE_API_URL || 'https://api.xuebaos.com';
+
 const templates = [
   { id: 'childhoodHome', icon: Home, color: 'from-blue-500 to-cyan-500' },
   { id: 'schoolCampus', icon: School, color: 'from-indigo-500 to-blue-600' },
@@ -66,7 +68,7 @@ export default function PalaceBuilder() {
 
       // Send raw text as a single concept — backend detects long text
       // and uses DeepSeek to extract concepts from the full text
-      const resp = await fetch('/api/ai/generate-palace', {
+      const resp = await fetch(`${API_BASE}/api/ai/generate-palace`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -107,7 +109,7 @@ export default function PalaceBuilder() {
     setIsSaving(true);
     try {
       const token = await getToken();
-      const resp = await fetch('/api/palaces', {
+      const resp = await fetch(`${API_BASE}/api/palaces`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

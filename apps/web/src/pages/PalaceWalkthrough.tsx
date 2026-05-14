@@ -16,6 +16,8 @@ import { useStudyStore } from '@/stores/studyStore';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
 
+const API_BASE = import.meta.env.VITE_API_URL || 'https://api.xuebaos.com';
+
 interface Locus {
   concept: string;
   description: string;
@@ -55,7 +57,7 @@ export default function PalaceWalkthrough() {
     const fetchPalace = async () => {
       try {
         const token = await getToken();
-        const resp = await fetch(`/api/palaces/${id}`, {
+        const resp = await fetch(`${API_BASE}/api/palaces/${id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
