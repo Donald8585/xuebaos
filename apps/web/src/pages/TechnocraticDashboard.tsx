@@ -181,69 +181,10 @@ function NextMethodCard() {
 export default function TechnocraticDashboard() {
   const { t } = useTranslation();
 
-  const [rank, setRank] = useState<StudyRank>('silver');
-  const [audits, setAudits] = useState<AuditResult[]>([
-    {
-      id: '1',
-      subject: 'Biology',
-      score: 82,
-      timeSpent: 15,
-      date: new Date(Date.now() - 259200000).toISOString(),
-      methods: ['Memory Palace', 'Active Recall', 'FSRS Spacing'],
-      aiResponse: {
-        keepDoing: ['Active Recall — strongest correlation with high scores', 'Memory Palace for organelle functions'],
-        dropIt: ['Passive re-reading — lowest yield per hour', 'Highlighting without recall testing'],
-        tryNext: ['Interleaved practice — mix Biology with Chemistry in one session', 'Speed drills before exams'],
-        learnFrom: ['学霸 Xueming — scored 5* using 3-pass annotation method', 'Study group leader — teaches concepts to others'],
-      },
-    },
-    {
-      id: '2',
-      subject: 'Physics',
-      score: 73,
-      timeSpent: 12,
-      date: new Date(Date.now() - 172800000).toISOString(),
-      methods: ['Problem Sets', 'Flashcards', 'Memory Palace'],
-      aiResponse: {
-        keepDoing: ['Problem sets — directly improves exam performance', 'Dimensional analysis checks'],
-        dropIt: ['Flashcards for formula memorization without understanding derivation'],
-        tryNext: ['Feynman teach-back for conceptual chapters', 'Past-paper problems per topic'],
-        learnFrom: ['DSE top scorer — uses concept maps before attempting problems'],
-      },
-    },
-  ]);
-  const [experiments, setExperiments] = useState<MethodExperiment[]>([
-    {
-      id: 'e1',
-      name: 'Interleaved Practice',
-      subject: 'Biology',
-      startedAt: new Date(Date.now() - 604800000).toISOString(),
-      status: 'active',
-      notes: 'Mixing Biology + Chemistry. Early results: feels harder during practice but recall improving.',
-    },
-    {
-      id: 'e2',
-      name: 'Speed Annotation Drill',
-      subject: 'Chemistry',
-      startedAt: new Date(Date.now() - 1209600000).toISOString(),
-      status: 'active',
-      notes: '30min timed annotation of past papers. Highlight key terms, draw reaction mechanisms.',
-    },
-  ]);
-  const [graveyard, setGraveyard] = useState<RetiredMethod[]>([
-    {
-      id: 'g1',
-      name: 'All-nighter cramming',
-      retiredAt: new Date(Date.now() - 2592000000).toISOString(),
-      reason: 'Sleep deprivation reduces memory consolidation by 40%. Scores dropped instead of improving.',
-    },
-    {
-      id: 'g2',
-      name: 'Music while studying (lyrics)',
-      retiredAt: new Date(Date.now() - 1209600000).toISOString(),
-      reason: 'Lyrical music competes with verbal working memory. Better: ambient or instrumental only.',
-    },
-  ]);
+  const [rank, setRank] = useState<StudyRank>('bronze');
+  const [audits, setAudits] = useState<AuditResult[]>([]);
+  const [experiments, setExperiments] = useState<MethodExperiment[]>([]);
+  const [graveyard, setGraveyard] = useState<RetiredMethod[]>([]);
 
   // New audit form
   const [showAuditForm, setShowAuditForm] = useState(false);
