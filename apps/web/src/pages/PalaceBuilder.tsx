@@ -25,6 +25,8 @@ const templates = [
 
 const TOTAL_STEPS = 4;
 
+type InputMode = 'paste' | 'upload';
+
 interface Locus {
   concept: string;
   description: string;
@@ -44,6 +46,8 @@ export default function PalaceBuilder() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [loci, setLoci] = useState<Locus[]>([]);
+  const [inputMode, setInputMode] = useState<InputMode>('paste');
+  const [uploadedFileName, setUploadedFileName] = useState('');
 
   const canNext = () => {
     switch (step) {
@@ -189,20 +193,83 @@ export default function PalaceBuilder() {
             <Card>
               <CardHeader>
                 <CardTitle>{t('palace.builder.step2')}</CardTitle>
-                <p className="text-sm text-slate-400">{t('palace.builder.step2Desc')}</p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => setInputMode('paste')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      inputMode === 'paste' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:border-slate-600'
+                    }`}
+                  >
+                    📋 Paste Text
+                  </button>
+                  <button
+                    onClick={() => setInputMode('upload')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      inputMode === 'upload' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:border-slate-600'
+                    }`}
+                  >
+                    📁 Upload File
+                  </button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Input
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Subject (e.g., Biology, History, Chemistry)..."
-                />
-                <Textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Paste your notes, textbook excerpts, or lecture content here..."
-                  className="min-h-[250px]"
-                />
+                {inputMode === 'paste' ? (
+                  <>
+                    <Input
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      placeholder="Subject (e.g., Biology, History, Chemistry)..."
+                    />
+                    <Textarea
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      placeholder="Paste your notes, textbook excerpts, or lecture content here..."
+                      className="min-h-[250px]"
+                    />
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    <Input
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      placeholder="Subject (e.g., Biology, History, Chemistry)..."
+                    />
+                    <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center space-y-3">
+                      <p className="text-3xl">📄</p>
+                      <p className="text-sm text-slate-300">Drop .txt or .md files here</p>
+                      <input
+                        type="file"
+                        accept=".txt,.md"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setUploadedFileName(file.name);
+                          const text = await file.text();
+                          setContent(text);
+                          if (!subject) setSubject(file.name.replace(/\.[^.]+$/, ''));
+                        }}
+                        className="block mx-auto text-sm text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
+                      />
+                      {uploadedFileName && (
+                        <p className="text-xs text-emerald-400">✅ {uploadedFileName} loaded ({content.length.toLocaleString()} chars)</p>
+                      )}
+                      <div className="flex items-center justify-center gap-4 mt-3">
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 text-xs text-slate-400">
+                          <span className="text-emerald-400">✓</span> .txt
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 text-xs text-slate-400">
+                          <span className="text-emerald-400">✓</span> .md
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/50 text-xs text-slate-600">
+                          🔒 .pptx — Coming next week
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/50 text-xs text-slate-600">
+                          🔒 .docx — Coming next week
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <Button onClick={handleGenerate} disabled={!canNext() || isGenerating} className="w-full sm:w-auto">
                   {isGenerating ? (
                     <><Loader2 size={16} className="mr-2 animate-spin" /> {t('palace.builder.generating')}</>

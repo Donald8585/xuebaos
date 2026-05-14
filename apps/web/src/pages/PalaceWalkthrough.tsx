@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { LocusView } from '@/components/palace/LocusView';
@@ -49,6 +49,7 @@ export default function PalaceWalkthrough() {
   const [loading, setLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'spatial'>('list');
 
   useEffect(() => {
     const fetchPalace = async () => {
@@ -167,6 +168,13 @@ export default function PalaceWalkthrough() {
           <span>{Math.round(((currentLocusIndex + 1) / loci.length) * 100)}%</span>
         </div>
         <Progress value={((currentLocusIndex + 1) / loci.length) * 100} />
+        {/* View Mode Toggle */}
+        <div className="flex justify-end">
+          <div className="flex rounded-lg bg-slate-800 p-0.5">
+            <button onClick={() => setViewMode('list')} className={`px-3 py-1 rounded text-xs ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>📋 List</button>
+            <button onClick={() => setViewMode('spatial')} className={`px-3 py-1 rounded text-xs ${viewMode === 'spatial' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>🗺️ Spatial Map (Beta)</button>
+          </div>
+        </div>
       </div>
 
       <AnimatePresence mode="wait">
@@ -191,8 +199,62 @@ export default function PalaceWalkthrough() {
           </Card>
 
           <LocusView locus={currentLocus} quizMode={quizMode} />
+
+          {/* Feature 3 Stub: Symbolic Object */}
+          {!quizMode && (
+            <Card className="border-amber-500/20 bg-amber-500/5">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">🔮</span>
+                  <div className="flex-1">
+                    <p className="text-sm text-amber-300 font-medium">AI Symbolic Object</p>
+                    <p className="text-xs text-slate-400 mt-0.5">AI-generated visual icons for each locus — coming next week</p>
+                  </div>
+                  <Badge variant="warning" className="shrink-0">Coming soon</Badge>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </motion.div>
       </AnimatePresence>
+
+      {/* Feature 4 Stub: Spatial Map View */}
+      {viewMode === 'spatial' && (
+        <Card className="mt-4 bg-slate-800/30 border-slate-700/30">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-medium text-slate-300">🗺️ Spatial Memory Palace</p>
+              <Badge variant="secondary">Beta — Drag-to-arrange next week</Badge>
+            </div>
+            <div className="aspect-[4/3] rounded-xl bg-slate-900/50 border border-slate-700/30 relative overflow-hidden">
+              {/* Floor plan grid */}
+              <svg viewBox="0 0 400 300" className="w-full h-full">
+                {/* Rooms */}
+                {['#1F2937','#111827','#1F2937','#111827','#1F2937','#111827'].map((fill, i) => (
+                  <rect key={i} x={10+(i%3)*130} y={10+Math.floor(i/3)*140} width={120} height={130} rx={6} fill={fill} stroke="#374151" strokeWidth="1" />
+                ))}
+                {/* Path */}
+                <path d="M70,75 L190,75 L190,215 L320,215" fill="none" stroke="#4F46E5" strokeWidth="2" strokeDasharray="6 3" opacity="0.5" />
+                {/* Pins */}
+                {loci.slice(0, 6).map((l, i) => (
+                  <g key={i}>
+                    <circle cx={70+(i%2)*250+(i>1?130:0)} cy={40+Math.floor(i/3)*140+(i>1?100:0)} r={12} fill="#4F46E5" opacity="0.8" />
+                    <text x={70+(i%2)*250+(i>1?130:0)} y={44+Math.floor(i/3)*140+(i>1?100:0)} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">{i+1}</text>
+                    <text x={70+(i%2)*250+(i>1?130:0)} y={62+Math.floor(i/3)*140+(i>1?100:0)} textAnchor="middle" fill="#94A3B8" fontSize="7">{l.concept?.slice(0,12)}</text>
+                  </g>
+                ))}
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                <div className="text-center">
+                  <p className="text-sm text-white font-medium mb-1">🗺️ Drag-to-arrange</p>
+                  <p className="text-xs text-slate-400">Coming next week — drag loci to custom positions</p>
+                  <button className="mt-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs">Notify me</button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex justify-between items-center">
         <Button variant="outline" onClick={prevLocus} disabled={currentLocusIndex === 0}>
