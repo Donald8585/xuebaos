@@ -13,6 +13,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { parseDocx, parsePptx } from '@/lib/fileParser';
 import toast from 'react-hot-toast';
 
 const templates = [
@@ -239,14 +240,27 @@ export default function PalaceBuilder() {
                       <p className="text-sm text-slate-300">Drop .txt or .md files here</p>
                       <input
                         type="file"
-                        accept=".txt,.md"
+                        accept=".txt,.md,.docx,.pptx"
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
                           setUploadedFileName(file.name);
-                          const text = await file.text();
-                          setContent(text);
-                          if (!subject) setSubject(file.name.replace(/\.[^.]+$/, ''));
+                          try {
+                            let text = '';
+                            const ext = file.name.split('.').pop()?.toLowerCase();
+                            if (ext === 'docx') {
+                              text = await parseDocx(file);
+                            } else if (ext === 'pptx') {
+                              text = await parsePptx(file);
+                            } else {
+                              text = await file.text();
+                            }
+                            setContent(text);
+                            if (!subject) setSubject(file.name.replace(/\.[^.]+$/, ''));
+                          } catch (err) {
+                            toast.error(`Failed to parse ${file.name}: ${err instanceof Error ? err.message : 'Unknown'}`);
+                            setUploadedFileName('');
+                          }
                         }}
                         className="block mx-auto text-sm text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
                       />
@@ -260,11 +274,11 @@ export default function PalaceBuilder() {
                         <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 text-xs text-slate-400">
                           <span className="text-emerald-400">✓</span> .md
                         </div>
-                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/50 text-xs text-slate-600">
-                          🔒 .pptx — Coming next week
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 text-xs text-slate-400">
+                          <span className="text-emerald-400">✓</span> .docx
                         </div>
-                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800/50 text-xs text-slate-600">
-                          🔒 .docx — Coming next week
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 text-xs text-slate-400">
+                          <span className="text-emerald-400">✓</span> .pptx
                         </div>
                       </div>
                     </div>
