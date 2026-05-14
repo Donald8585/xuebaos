@@ -114,88 +114,52 @@ export async function optionalAuth(
 }
 
 /**
- * Verify a Clerk-issued JWT against their JWKS endpoint.
- * Returns { sub: userId, email: primary email }.
+ * Verify a Clerk session token using Clerk's REST API.
+ * Works with Clerk v2 session tokens (NOT standard JWTs — Clerk session
+ * tokens are opaque to the client and must be verified server-side).
  */
 async function verifyClerkJWT(env: Env, token: string): Promise<{ sub: string; email?: string }> {
-  // Decode JWT header to get kid
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Invalid JWT format");
-  }
-
-  const header = JSON.parse(atob(parts[0]));
-  const kid = header.kid;
-  if (!kid) throw new Error("No kid in JWT header");
-
-  const payload = JSON.parse(atob(parts[1]));
-
-  // Validate expiration
-  if (payload.exp && Date.now() >= payload.exp * 1000) {
-    throw new Error("Token expired");
-  }
-
-  // Fetch JWKS from Clerk — derive from token issuer or use env override
-  const issuer = payload.iss || "https://clerk.xuebaos.com";
-  const jwksUrl = env.CLERK_JWKS_URL || `${issuer}/.well-known/jwks.json`;
-  const jwksResp = await fetch(jwksUrl);
-
-  if (!jwksResp.ok) {
-    throw new Error(`Failed to fetch JWKS: ${jwksResp.status}`);
-  }
-
-  const jwks = (await jwksResp.json()) as { keys: Array<Record<string, unknown>> };
-  const key = jwks.keys.find((k) => k.kid === kid);
-
-  if (!key) {
-    throw new Error(`Key ${kid} not found in JWKS`);
-  }
-
-  // Verify signature using Web Crypto
-  const cryptoKey = await importJWK(key);
-  const isValid = await crypto.subtle.verify(
-    { name: "RSASSA-PKCS1-v1.5", hash: "SHA-256" },
-    cryptoKey,
-    base64UrlToArrayBuffer(parts[2]), // signature
-    new TextEncoder().encode(`${parts[0]}.${parts[1]}`) // signed data
-  );
-
-  if (!isValid) {
-    throw new Error("Invalid token signature");
-  }
-
-  // Extract user ID from sub claim + email
-  const sub = payload.sub;
-  if (!sub) throw new Error("No subject claim in token");
-
-  // Clerk JWT includes email in the payload
-  const email = payload.email || payload.primary_email_address || undefined;
-
-  return { sub, email };
-}
-
-async function importJWK(jwk: Record<string, unknown>): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "jwk",
-    {
-      kty: jwk.kty as string,
-      n: jwk.n as string,
-      e: jwk.e as string,
-      alg: jwk.alg as string,
+  // Clerk session tokens look like JWTs but use a custom signing mechanism.
+  // The only reliable way to verify them is Clerk's own tokens/verify endpoint.
+  const resp = await fetch("https://api.clerk.com/v1/tokens/verify", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.CLERK_SECRET_KEY}`,
+      "Content-Type": "application/json",
     },
-    { name: "RSASSA-PKCS1-v1.5", hash: "SHA-256" },
-    false,
-    ["verify"]
-  );
+    body: JSON.stringify({ token }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "unknown");
+    throw new Error(`Clerk token verification failed (${resp.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data = await resp.json() as {
+    sub?: string;
+    user_id?: string;
+    sid?: string;
+    status?: string;
+    payload?: Record<string, unknown>;
+  };
+
+  const userId = data.sub || data.user_id;
+  if (!userId) throw new Error("Clerk verify response missing user_id");
+
+  // Fetch email from Clerk for founder detection
+  let email: string | undefined;
+  try {
+    const userResp = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+      headers: { Authorization: `Bearer ${env.CLERK_SECRET_KEY}` },
+    });
+    if (userResp.ok) {
+      const userData = await userResp.json() as {
+        email_addresses?: Array<{ email_address: string }>;
+      };
+      email = userData.email_addresses?.[0]?.email_address;
+    }
+  } catch { /* best-effort email fetch */ }
+
+  return { sub: userId, email };
 }
 
-function base64UrlToArrayBuffer(base64url: string): ArrayBuffer {
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(base64 + padding);
-  const buf = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    buf[i] = binary.charCodeAt(i);
-  }
-  return buf.buffer;
-}
