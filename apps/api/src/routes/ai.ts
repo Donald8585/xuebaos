@@ -83,13 +83,18 @@ const analyzePassageSchema = z.object({
 // POST /api/ai/generate-palace — Extract concepts, generate loci
 // ════════════════════════════════════════════════════════════════
 ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSchema), async (c) => {
+  const requestId = crypto.randomUUID();
+  console.log("[stage.ai.generate-palace]", JSON.stringify({ requestId, contentLength: c.req.header("content-length") }));
+
   try {
     const body = c.req.valid("json");
-    const result = await generatePalace(c.env, body.topic, body.concepts, body.count);
-    return c.json(result);
+    // Limit total concept text to 20KB — prevents Worker timeout on large docs
+    const truncatedConcepts = body.concepts.map(c => c.slice(0, 20000));
+    const result = await generatePalace(c.env, body.topic, truncatedConcepts, body.count);
+    return c.json({ ...result, requestId });
   } catch (err) {
-    console.error("generate-palace failed:", err);
-    return c.json({ error: "AI generation failed", details: String(err) }, 500);
+    console.error("[ai.generate-palace.fail]", JSON.stringify({ requestId, msg: String(err).slice(0, 200) }));
+    return c.json({ error: "ai_generation_failed", reason: "ai_error", stage: "handler", detail: String(err).slice(0, 200), requestId }, 502);
   }
 });
 

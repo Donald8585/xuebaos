@@ -21,13 +21,18 @@ export async function deepseekChat(
   messages: ChatMessage[],
   options?: { temperature?: number; maxTokens?: number; stream?: boolean }
 ): Promise<string> {
-  const resp = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000); // 25s timeout
+
+  try {
+    const resp = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
       model: "deepseek-chat",
       messages,
       temperature: options?.temperature ?? 0.7,
@@ -46,6 +51,9 @@ export async function deepseekChat(
   };
 
   return data.choices[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -311,12 +319,16 @@ export async function generatePalace(
   // If concepts look like raw text (>200 chars total), send as full text extraction
   const isRawText = concepts.length <= 5 && concepts.some(c => c.length > 40);
   
+  // Limit total prompt to 30KB — prevents timeout on large uploads
+  const MAX_PROMPT = 30000;
+  const rawText = concepts.join("\n").slice(0, MAX_PROMPT);
+
   const prompt = isRawText
     ? `${GENERATE_PALACE_FROM_TEXT_PROMPT}
 
 Subject/Topic: ${topic}
 Source Text:
-${concepts.join("\n")}
+${rawText}
 ${count ? `\nTarget loci count: ${count}` : ""}`
     : `${GENERATE_PALACE_PROMPT}
 
