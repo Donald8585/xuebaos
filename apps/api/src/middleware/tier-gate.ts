@@ -142,11 +142,14 @@ export function checkLimit(resource: ResourceType) {
     ? "maxStories"
     : "maxQuestions";
 
-  const tableMap: Record<ResourceType, { table: string; userCol: string }> = {
-    palaces: { table: "memoryPalaces", userCol: "userId" },
-    stories: { table: "mnemonicStories", userCol: "userId" },
-    questions: { table: "questions", userCol: "userId" },
-  };
+  // Direct schema references — bracket access on module namespace
+  // (db.schema["memoryPalaces"]) breaks Drizzle's .where() callback
+  const getTable = (db: any) =>
+    resource === "palaces" ? db.schema.memoryPalaces
+    : resource === "stories" ? db.schema.mnemonicStories
+    : db.schema.questions;
+
+  const userCol = "userId";
 
   return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
     const requestId = crypto.randomUUID();
@@ -175,8 +178,8 @@ export function checkLimit(resource: ResourceType) {
       }
 
       // Count current resources (this month for questions)
-      const { table, userCol } = tableMap[resource];
-      const allResources = await db.select().from(db.schema[table])
+      const table = getTable(db);
+      const allResources = await db.select().from(table)
         .where((u: any, { eq }: any) => eq(u[userCol], internalUserId));
 
       let count = allResources.length;
