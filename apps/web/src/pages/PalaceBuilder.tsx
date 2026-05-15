@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '@clerk/clerk-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, School, Castle, Gamepad2, PenTool,
@@ -48,6 +49,7 @@ export default function PalaceBuilder() {
   const [loci, setLoci] = useState<Locus[]>([]);
   const [inputMode, setInputMode] = useState<InputMode>('paste');
   const [uploadedFileName, setUploadedFileName] = useState('');
+  const { getToken } = useAuth();
 
   const canNext = () => {
     switch (step) {
@@ -60,13 +62,68 @@ export default function PalaceBuilder() {
 
   const handleGenerate = async () => {
     setIsGenerating(true);
-    try {
-      const data = await api.post<{ loci: any[] }>('/ai/generate-palace', {
-        topic: subject || 'Study Material',
-        concepts: [content],
-        count: 20,
-      });
+    const API_BASE = import.meta.env.VITE_API_URL || '/api';
+    let jobId: string | null = null;
 
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45000); // 45s client timeout
+
+      const resp = await fetch(`${API_BASE}/ai/generate-palace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          topic: subject || 'Study Material',
+          concepts: [content],
+          count: 20,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (resp.status === 202) {
+        // Large payload → async polling
+        const { jobId: jid } = await resp.json();
+        jobId = jid;
+        toast.success('Large document — processing in background...');
+
+        // Poll every 2s for up to 60s
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const pollResp = await fetch(`${API_BASE}/ai/jobs/${jobId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pollResp.ok) continue;
+          const job = await pollResp.json();
+          if (job.status === 'completed') {
+            const generatedLoci: Locus[] = (job.result?.loci || []).map((l: any) => ({
+              concept: l.concept || '',
+              description: l.description || l.locusName || '',
+              mnemonic: l.association || '',
+            }));
+            if (generatedLoci.length === 0) throw new Error('No concepts extracted');
+            setLoci(generatedLoci);
+            setStep(3);
+            toast.success(`Generated ${generatedLoci.length} memory loci!`);
+            return;
+          }
+          if (job.status === 'failed') {
+            throw new Error(job.error || 'AI generation failed');
+          }
+          // status === 'queued' → keep polling
+        }
+        throw new Error('Generation timed out — please try with a smaller document');
+      }
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || err.error || `HTTP ${resp.status}`);
+      }
+
+      const data = await resp.json();
       const generatedLoci: Locus[] = (data.loci || []).map((l: any) => ({
         concept: l.concept || '',
         description: l.description || l.locusName || '',
@@ -78,8 +135,12 @@ export default function PalaceBuilder() {
       setLoci(generatedLoci);
       setStep(3);
       toast.success(`Generated ${generatedLoci.length} memory loci!`);
-    } catch (err) {
-      toast.error(`Generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        toast.error('Request timed out — try a shorter document or split into sections');
+      } else {
+        toast.error(`Generation failed: ${err.message || 'Unknown error'}`);
+      }
     } finally {
       setIsGenerating(false);
     }

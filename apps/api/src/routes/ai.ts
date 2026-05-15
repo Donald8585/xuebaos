@@ -84,17 +84,45 @@ const analyzePassageSchema = z.object({
 // ════════════════════════════════════════════════════════════════
 ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSchema), async (c) => {
   const requestId = crypto.randomUUID();
-  console.log("[stage.ai.generate-palace]", JSON.stringify({ requestId, contentLength: c.req.header("content-length") }));
+  const internalUserId = c.get("internalUserId");
+  const contentLength = Number(c.req.header("content-length") || 0);
+  console.log("[stage.ai.generate-palace]", JSON.stringify({ requestId, contentLength }));
 
   try {
     const body = c.req.valid("json");
-    // Limit total concept text to 20KB — prevents Worker timeout on large docs
-    const truncatedConcepts = body.concepts.map(c => c.slice(0, 20000));
-    const result = await generatePalace(c.env, body.topic, truncatedConcepts, body.count);
+    const totalChars = body.concepts.reduce((sum, c) => sum + c.length, 0);
+
+    // Large payloads (>50KB) → async via queue to avoid Worker timeout
+    if (contentLength > 50000 || totalChars > 50000) {
+      const jobId = crypto.randomUUID();
+      await c.env.AI_QUEUE.send({
+        type: "generate-palace",
+        userId: internalUserId,
+        payload: { topic: body.topic, concepts: body.concepts, count: body.count, jobId },
+      });
+      // Store pending job in KV for polling
+      await c.env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "queued", requestId }), { expirationTtl: 3600 });
+      return c.json({ jobId, status: "queued", requestId }, 202);
+    }
+
+    // Small payloads → synchronous
+    const result = await generatePalace(c.env, body.topic, body.concepts, body.count);
     return c.json({ ...result, requestId });
   } catch (err) {
     console.error("[ai.generate-palace.fail]", JSON.stringify({ requestId, msg: String(err).slice(0, 200) }));
     return c.json({ error: "ai_generation_failed", reason: "ai_error", stage: "handler", detail: String(err).slice(0, 200), requestId }, 502);
+  }
+});
+
+// GET /api/ai/jobs/:jobId — Poll async job status
+ai.get("/jobs/:jobId", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  try {
+    const raw = await c.env.CACHE.get(`job:${jobId}`);
+    if (!raw) return c.json({ status: "not_found" }, 404);
+    return c.json(JSON.parse(raw));
+  } catch {
+    return c.json({ status: "error" }, 500);
   }
 });
 

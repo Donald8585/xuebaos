@@ -345,16 +345,18 @@ async function handleAsyncAIJob(
 ): Promise<void> {
   switch (job.type) {
     case "generate-palace": {
-      const { topic, concepts } = job.payload as { topic: string; concepts: string[] };
-      const { deepseekChat } = await import("./services/ai");
-      const result = await deepseekChat(env, [
-        { role: "user", content: `Generate a memory palace for topic: ${topic}, concepts: ${concepts.join(", ")}` },
-      ]);
+      const { topic, concepts, count } = job.payload as { topic: string; concepts: string[]; count?: number };
       const jobId = job.payload.jobId as string;
-      if (jobId) {
-        await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "completed", result: JSON.parse(result) }), {
-          expirationTtl: 3600,
-        });
+      try {
+        const { generatePalace } = await import("./services/ai");
+        const result = await generatePalace(env, topic, concepts, count);
+        if (jobId) {
+          await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "completed", result }), { expirationTtl: 3600 });
+        }
+      } catch (e: any) {
+        if (jobId) {
+          await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "failed", error: String(e?.message ?? "AI generation failed").slice(0, 500) }), { expirationTtl: 3600 });
+        }
       }
       break;
     }
