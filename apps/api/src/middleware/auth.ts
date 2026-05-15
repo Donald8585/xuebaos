@@ -51,7 +51,7 @@ async function verifyClerkToken(token: string, secretKey: string | undefined): P
   const cryptoKey = await crypto.subtle.importKey(
     "jwk",
     { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: jwk.alg || "RS256" },
-    { name: "RSASSA-PKCS1-v1.5", hash: "SHA-256" },
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["verify"]
   );
@@ -60,7 +60,7 @@ async function verifyClerkToken(token: string, secretKey: string | undefined): P
   const sigBytes = base64UrlDecode(signature) as unknown as ArrayBuffer;
   const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
   const valid = await crypto.subtle.verify(
-    { name: "RSASSA-PKCS1-v1.5", hash: "SHA-256" },
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     cryptoKey,
     sigBytes,
     data
@@ -131,7 +131,12 @@ export async function authMiddleware(
     await next();
   } catch (err: any) {
     console.error("[AUTH]", err?.message, err?.reason);
-    return c.json({ error: "unauthorized", reason: err?.reason || "unknown", message: err?.message }, 401);
+    const isServerError = (err?.message || '').includes('import') ||
+      (err?.message || '').includes('Unrecognized') ||
+      (err?.message || '').includes('JWKS fetch');
+    const status = isServerError ? 500 : 401;
+    const reason = err?.reason || (isServerError ? 'server_error' : 'unknown');
+    return c.json({ error: isServerError ? 'server_error' : 'unauthorized', reason, message: err?.message }, status);
   }
 }
 
