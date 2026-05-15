@@ -188,7 +188,7 @@ const paginationSchema = z.object({
 // ════════════════════════════════════════════════════════════════
 palaces.get("/", authMiddleware, zValidator("query", paginationSchema), async (c) => {
   const internalUserId = c.get("internalUserId");
-  const { page, limit, subject, search } = c.req.valid("query");
+  const { page, limit, subject } = c.req.valid("query");
   const db = c.get("db");
   const offset = (page - 1) * limit;
 
@@ -243,7 +243,7 @@ palaces.get("/", authMiddleware, zValidator("query", paginationSchema), async (c
 // GET /api/palaces/public — Public palaces
 // ════════════════════════════════════════════════════════════════
 palaces.get("/public", zValidator("query", paginationSchema), async (c) => {
-  const { page, limit, subject, search } = c.req.valid("query");
+  const { page, limit, subject } = c.req.valid("query");
   const db = c.get("db");
   const offset = (page - 1) * limit;
 

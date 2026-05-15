@@ -37,7 +37,7 @@ calendar.get("/", authMiddleware, async (c) => {
 });
 
 // GET /api/reviews/calendar.ics — iCal feed (signed URL stub)
-calendar.get("/calendar.ics", authMiddleware, async (c) => {
+calendar.get("/ics", authMiddleware, async (c) => {
   const internalUserId = c.get("internalUserId");
   const db = c.get("db");
   const now = Math.floor(Date.now() / 1000);

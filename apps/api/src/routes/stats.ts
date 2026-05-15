@@ -11,7 +11,7 @@ stats.get("/", authMiddleware, async (c) => {
   const db = c.get("db");
 
   try {
-    const [sessionCount, palaceCount, storyCount, questionCount, auditCount] = await Promise.all([
+    const [sessionCount, palaceCount, storyCount] = await Promise.all([
       db.select({ count: db.schema.studySessions.id }).from(db.schema.studySessions)
         .where(eq(db.schema.studySessions.userId, internalUserId)),
       db.select({ count: db.schema.memoryPalaces.id }).from(db.schema.memoryPalaces)

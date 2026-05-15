@@ -78,9 +78,6 @@ const analyzePassageSchema = z.object({
   language: z.string().default("chinese"),
 });
 
-const transcribeSchema = z.object({
-  language: z.string().default("zh"),
-});
 
 // ════════════════════════════════════════════════════════════════
 // POST /api/ai/generate-palace — Extract concepts, generate loci

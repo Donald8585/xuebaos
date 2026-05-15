@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { createDb, type Database } from "./db/index";
+import { createDb } from "./db/index";
 import { MiddlewareError, validateTABLES } from "./lib/errors";
 
 // Startup invariant — fails Worker init if TABLES registry is malformed
@@ -93,7 +93,7 @@ app.use("*", async (c, next) => {
 app.use("*", logger());
 
 // Version header — confirms which deployment is live
-const WORKER_VERSION = "81f6b6f4-m1"; // bump on every deploy
+const WORKER_VERSION = "f5a0b237-clean"; // bump on every deploy
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Worker-Version", WORKER_VERSION);
@@ -168,7 +168,8 @@ app.route("/api/reviews/calendar", reviewCalendarRoutes);
 app.route("/api/abbreviations", abbreviationRoutes);
 app.route("/api/concept-chains", conceptChainRoutes);
 app.route("/api/exports", exportRoutes);
-app.route("/api", communityRoutes);
+app.route("/api/community", communityRoutes);
+// Note: public /p/:slug is at /api/community/p/:slug
 app.route("/api/settings", settingsRoutes);
 app.route("/api/technocratic", technocraticRoutes);
 app.route("/api/stats", statsRoutes);
@@ -342,8 +343,6 @@ async function handleAsyncAIJob(
   env: Env,
   job: { type: string; userId: string; payload: Record<string, unknown> }
 ): Promise<void> {
-  const db = createDb(env.DB);
-
   switch (job.type) {
     case "generate-palace": {
       const { topic, concepts } = job.payload as { topic: string; concepts: string[] };

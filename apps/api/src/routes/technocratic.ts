@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, desc, and, sql, gte, lte } from "drizzle-orm";
+import { eq, desc, and, sql, gte } from "drizzle-orm";
 import type { Env } from "../index";
 import { authMiddleware } from "../middleware/auth";
 

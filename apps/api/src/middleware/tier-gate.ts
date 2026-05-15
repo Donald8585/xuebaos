@@ -208,7 +208,7 @@ export function checkLimit(resource: ResourceType) {
       c.set("userTier", effectiveTier);
       await next();
     } catch (e: any) {
-      const wrapped = new MiddlewareError("checkLimit", e);
+      void new MiddlewareError("checkLimit", e);
       console.error(`[checkLimit.${resource}.fail]`, JSON.stringify({
         requestId,
         msg: String(e?.message ?? "").slice(0, 300),

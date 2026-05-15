@@ -47,11 +47,6 @@ const aiGenerateSchema = z.object({
   count: z.number().int().min(1).max(50).default(10),
 });
 
-const answerSchema = z.object({
-  userAnswer: z.string(),
-  isCorrect: z.boolean(),
-  timeSpentMs: z.number().int().optional(),
-});
 
 const ratingSchema = z.object({
   rating: z.number().int().min(1).max(4), // 1=Again, 2=Hard, 3=Good, 4=Easy

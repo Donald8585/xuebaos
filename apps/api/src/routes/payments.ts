@@ -7,7 +7,7 @@ import { authMiddleware } from "../middleware/auth";
 import {
   createCheckoutSession,
   constructWebhookEvent,
-  retrieveSubscription,
+
   cancelSubscription,
   type TierKey,
 } from "../services/stripe";

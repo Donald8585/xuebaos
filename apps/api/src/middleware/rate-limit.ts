@@ -69,7 +69,7 @@ export function rateLimiter(maxRequests: number = 60, windowSeconds: number = 60
 
       await next();
     } catch (e: any) {
-      const wrapped = new MiddlewareError("rateLimiter", e);
+      void new MiddlewareError("rateLimiter", e);
       console.error("[rateLimit.fail]", JSON.stringify({
         requestId,
         msg: String(e?.message ?? "").slice(0, 200),
