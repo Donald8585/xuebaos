@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import type { Env } from "../index";
 import { authMiddleware } from "../middleware/auth";
 import { requireFeature } from "../middleware/tier-gate";
@@ -314,6 +315,96 @@ ai.post("/transcribe", authMiddleware, requireFeature("audioNarration"), async (
   } catch (err) {
     console.error("transcribe failed:", err);
     return c.json({ error: "Transcription failed", details: String(err) }, 500);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// M1.2: POST /api/ai/symbol/:palaceId/:locusIndex — Generate symbol
+// ════════════════════════════════════════════════════════════════
+const symbolSchema = z.object({
+  prompt: z.string().min(1).max(500),
+  style: z.enum(["minimalist", "chinese-ink", "cyberpunk", "photoreal"]).optional(),
+});
+
+ai.post("/symbol/:palaceId/:locusIndex", authMiddleware, requireFeature("imageGeneration"), zValidator("json", symbolSchema), async (c) => {
+  const requestId = crypto.randomUUID();
+  const internalUserId = c.get("internalUserId");
+  const { palaceId, locusIndex } = c.req.param("locusIndex") as any;
+  const { prompt, style } = c.req.valid("json");
+  const db = c.get("db");
+
+  console.log("[stage.symbol.generate]", JSON.stringify({ requestId, palaceId, locusIndex }));
+
+  try {
+    const palace = await db.query.memoryPalaces.findFirst({
+      where: (p: any, { eq }: any) => eq(p.id, palaceId),
+    });
+    if (!palace) return c.json({ error: "not_found", reason: "palace_not_found", stage: "handler", requestId }, 404);
+
+    const idx = Number(c.req.param("locusIndex"));
+    if (isNaN(idx)) return c.json({ error: "save_failed", reason: "invalid_locus", stage: "handler", requestId }, 400);
+
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId,
+      userId: internalUserId,
+      jobType: "symbol_gen",
+      status: "queued",
+      payload: { palaceId, locusIndex: idx, prompt, style: style || "minimalist" },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await db.insert(db.schema.aiJobs).values(job as any);
+
+    // Update loci_symbols with pending status
+    const currentSymbols = (palace.lociSymbols || {}) as Record<string, any>;
+    currentSymbols[String(idx)] = { prompt, style: style || "minimalist", status: "generating", jobId };
+
+    await db.update(db.schema.memoryPalaces as any)
+      .set({ lociSymbols: currentSymbols, updatedAt: new Date() } as any)
+      .where(eq(db.schema.memoryPalaces.id, palaceId) as any);
+
+    return c.json({ jobId, status: "queued", requestId }, 202);
+  } catch (e: any) {
+    console.error("[symbol.generate.fail]", JSON.stringify({ requestId, msg: String(e?.message ?? "").slice(0, 200) }));
+    return c.json({ error: "internal_error", reason: "db_error", stage: "handler", detail: String(e?.message ?? "").slice(0, 200), requestId }, 500);
+  }
+});
+
+// M1.2: GET /api/ai/symbol/:palaceId/:locusIndex/status
+ai.get("/symbol/:palaceId/:locusIndex/status", authMiddleware, async (c) => {
+  const { palaceId } = c.req.param() as any;
+  const locusIndex = Number(c.req.param("locusIndex"));
+  const db = c.get("db");
+
+  try {
+    const palace = await db.query.memoryPalaces.findFirst({
+      where: (p: any, { eq }: any) => eq(p.id, palaceId),
+    });
+    if (!palace) return c.json({ error: "not_found" }, 404);
+
+    const symbols = (palace.lociSymbols || {}) as Record<string, any>;
+    const symbol = symbols[String(locusIndex)];
+    if (!symbol) return c.json({ status: "not_requested" });
+
+    if (symbol.jobId) {
+      const job = await db.query.aiJobs.findFirst({
+        where: (j: any, { eq }: any) => eq(j.id, symbol.jobId),
+      });
+      if (job) {
+        return c.json({
+          status: job.status,
+          imageKey: symbol.imageKey,
+          imageUrl: symbol.imageKey ? `/api/storage/${symbol.imageKey}` : null,
+          error: job.error,
+        });
+      }
+    }
+
+    return c.json({ status: symbol.status || "unknown", imageKey: symbol.imageKey });
+  } catch (e: any) {
+    return c.json({ error: "internal_error", detail: String(e?.message ?? "").slice(0, 200) }, 500);
   }
 });
 
