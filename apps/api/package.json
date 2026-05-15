@@ -10,7 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 execute xuebaos-db --local --file=./drizzle/migrations/*.sql",
     "db:migrate:prod": "wrangler d1 execute xuebaos-db --file=./drizzle/migrations/*.sql",
-    "lint:check": "grep -rn \"schema\\[.*\\\"\" src/ && echo \"ERROR: bracket-access on schema detected! Use TABLES registry or direct import.\" && exit 1 || echo \"OK: no schema bracket access\"",
+    "lint:check": "grep -rn \"schema\\[.*\\\"\" src/ && echo \"ERROR: bracket-access on schema!\" && exit 1; grep -rn \"TABLES\\[.*\\\"\" src/ && echo \"ERROR: bracket-access on TABLES!\" && exit 1; grep -rn \"\\.where(\\s*(\\s*\\w+\\s*,\\s*{\" src/ --include=\"*.ts\" | grep -v whereEq | grep -v whereAnd | grep -v __tests__ | grep -v \".d.ts\" && echo \"ERROR: raw .where((c,{eq}) destructure \u2014 use whereEq!\" && exit 1; echo \"OK: all patterns clean\"",
     "test": "npx tsx src/__tests__/middleware.test.ts && npx tsx src/__tests__/invariant.test.ts"
   },
   "dependencies": {

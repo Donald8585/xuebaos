@@ -2,103 +2,111 @@
 
 **Incident:** POST https://api.xuebaos.com/api/palaces → 500
 **Trigger:** .docx/.pptx upload → JSZip → AI-extracted palace
-**Deployments:** b4d985a7 → 4f6469c5 → 4e3e4b79 (three iterations)
+**Deploy history:** b4d985a7 → 4f6469c5 → 4e3e4b79 → cc87bb5a → d23117c0 → 196d7084 → 685d9398 → 53a6b71e → 2b333069
 
 ---
 
-## Root Cause
+## Root Cause Chain (Two Bugs)
 
-**The error was happening BEFORE the POST handler ran.** The first deployment (b4d985a7) added structured error handling inside the handler's try/catch, but the 500 was thrown in middleware — either `checkLimit("palaces")` (which had no try/catch) or the DB middleware. Since the handler never executed, `[palaces.create.fail]` was never logged, and the bare `{ error: "Internal server error" }` from the global `app.onError` was returned.
+### Bug 1: `db.schema["memoryPalaces"]` bracket access (fixed in cc87bb5a)
+`checkLimit("palaces")` used `db.schema["memoryPalaces"]` — bracket access on a TypeScript module namespace. In esbuild/wrangler bundles, module namespaces are NOT plain objects; bracket-access can return undefined-shaped proxies. Drizzle's `.where((cols, { eq }) => ...)` then received `undefined` as the ops argument → `Cannot destructure property 'eq' of 'undefined'`.
 
-The old `app.onError` returned:
-```json
-{ "error": "Internal server error" }
+### Bug 2: `sqliteTable()` third-arg callback with `uniqueIndex()` (fixed in 685d9398)
+After fixing Bug 1, `whereEq` was wired into `checkLimit`. The `TABLES.memoryPalaces` reference was correct via dot-access. Yet `whereEq` STILL received undefined ops. The culprit: `sqliteTable("memory_palaces", {...}, (table) => ({ userSlugIdx: uniqueIndex(...).on(...) }))` in drizzle-orm v0.33.0.
+
+The third-argument callback silently broke the table object for `db.select().from(table).where()` — the `where` callback received undefined ops even with a correct table reference. This was NOT detectable by grep because:
+- No `schema[...]` bracket access existed
+- No `TABLES[...]` bracket access existed  
+- The table was accessed via `TABLES.memoryPalaces` (correct dot-access)
+- The poison was Drizzle-level: the table object itself was broken by the callback
+
+**Why the first grep missed it:** The grep scanned for `schema\[`, `TABLES\[`, and raw `.where((c,{eq})` patterns — all clean. But the table object returned by `sqliteTable()` was already corrupted before any code accessed it.
+
+**Why `siteHint + table()` make this class extinct:**
+- `getSafeTable()` fails fast with `unknown_or_invalid_table:<name>` if the table doesn't exist in the registry
+- `whereEq` with `siteHint` tags the crash with the exact call site (e.g., `[site=checkLimit:palaces] [col=userId]`)
+- `validateTABLES()` runs at Worker boot — catches malformed TABLES before the first request
+- `whereEq`/`whereAnd` refuse to destructure ops directly; if ops is undefined they throw a named `DRIZZLE_OPS_MISSING` error
+- `classifyDbError()` recognizes `DRIZZLE_OPS_MISSING` → `reason: "drizzle_table_invalid"`
+
+## What Was Fixed
+
+### Structural
+| Component | Before | After |
+|-----------|--------|-------|
+| Table lookup | `db.schema["memoryPalaces"]` | `getSafeTable("memoryPalaces")` from typed registry |
+| Drizzle where | `.where((u, { eq }) => eq(...))`  | `.where(whereEq("userId", uid, "checkLimit:palaces"))` |
+| Schema definition | `uniqueIndex()` callback in sqliteTable | Removed (index exists in D1 via migration) |
+| Error surfacing | `{ error: "Internal server error" }` | `{ error, reason, stage, detail, code, siteHint, requestId }` |
+
+### Layers (every one now structured)
 ```
-— no `reason`, no `detail`, no `requestId`. This is what the user saw.
-
-## What Was Fixed (3 iterations)
-
-### Iteration 1 (b4d985a7) — Schema + Handler
-- Added `loci` column migration (column already existed in D1 — non-blocking)
-- Added `slug`, `content_hash`, `extras` columns for AI fields
-- UNIQUE(user_id, slug) index for idempotency
-- Added `spatialMap`, `symbolicObjects`, `abbreviationChain` to zod schema
-- Wrapped POST handler in structured try/catch with `classifyDbError()`
-- Body size guard: 413 for > 1MB
-- Base64 image → R2 stripping
-- Frontend: `ApiError.reason`, `.issues`, `.requestId` exposed
-- Migration 0001 + 0002 run successfully on D1
-
-### Iteration 2 (4f6469c5) — Middleware Error Layers
-- Wrapped `checkLimit()` in try/catch → returns structured 500 with `reason: "limit_check_failed"`
-- Wrapped DB middleware in try/catch → `db_binding_missing` / `db_init_failed`
-- Fixed `app.onError` → always returns `{ error, reason, detail, requestId }`
-- Added `palaces.onError` as route-level safety net
-- Added `X-Worker-Version` header to every response
-- Health check includes `version` field
-
-### Iteration 3 (4e3e4b79) — Top-Level Boundary + Diagnostics
-- **Top-level Worker error boundary** in `export default { fetch() }` — catches exceptions that escape `app.onError` (CPU exceeded, module import failures, uncaught promises)
-- **Per-stage logging**: `[stage.handler.enter]`, `[stage.handler.parse]`, `[stage.handler.slughash]`, `[stage.handler.idempotency]`, `[stage.handler.r2]`, `[stage.handler.insert]`, `[stage.handler.fetchback]`, `[stage.handler.respond]` — missing tag = crash point
-- **Stale-frontend guard**: `x-web-version` header sent from web → logged in handler `[stage.handler.enter]`
-- **Frontend diagnostics**: `[api.fail]` console.error with `status`, `reason`, `requestId`, raw response body (truncated 500 chars) on any non-2xx
-
-## Error Classification Chain
-
+Worker boundary     → { reason: "unhandled_exception", stage: "worker" }
+app.onError         → { reason: "middleware:<name>" | "schema_drift" | ..., stage }
+palaces.onError     → { reason: ..., stage: "route" }
+checkLimit catch    → { reason: "middleware:checkLimit", stage: "middleware" }
+rateLimiter catch   → { reason: "middleware:rateLimiter", stage: "middleware" }
+authMiddleware catch → { reason: "no_token" | "invalid_token" | ..., code }
+Handler try/catch   → { reason: "validation_failed" | "duplicate_slug" | ..., stage: "handler" }
 ```
-Worker exception → { reason: "unhandled_exception" }
-  ↓
-app.onError → { reason: "schema_drift" | "cpu_exceeded" | "middleware_null_ref" | "db_error" | "unknown" }
-  ↓
-palaces.onError → { reason: classifyDbError(e) }
-  ↓
-checkLimit catch → { reason: "limit_check_failed" }
-  ↓
-authMiddleware catch → { reason: "no_token" | "invalid_token" | "expired" | "server_error" }
-  ↓
-Handler try/catch → { reason: "validation_failed" | "body_too_large" | "duplicate_slug"
-  | "schema_drift" | "unique_violation" | "fk_violation" | "json_bind" | "db_unavailable" | "unknown" }
+
+### Typed Registry
+```typescript
+export const TABLES = { memoryPalaces, users, ... } as const;
+export type TableName = keyof typeof TABLES;
+export function getSafeTable(name: TableName) { ... }
+// startup invariant: validateTABLES() runs on Worker init
 ```
+
+### whereEq + whereAnd with siteHint
+```typescript
+whereEq("userId", uid, "checkLimit:palaces")
+// Throws: [DRIZZLE_OPS_MISSING] [site=checkLimit:palaces] [col=userId]
+```
+
+## Guardrails (zero-bare-500 invariant)
+
+1. **No bare 500**: Every error response has `{ error, reason, stage, detail, requestId }`
+2. **Site hints**: Every `whereEq`/`whereAnd` call tagged with caller identity
+3. **Startup invariant**: `validateTABLES()` runs on Worker init, catches malformed imports
+4. **Lint gate**: `npm run lint:check` bans `schema[`, `TABLES[`, and raw `.where((c,{eq})`
+5. **Invariant test**: Repo-wide scan proves bracket-access class extinct
+6. **Stale-FE guard**: `x-web-version` header logged; `[api.fail]` console.error in browser
+
+## Test Suite (14/14 passing)
+| Test | What it proves |
+|------|---------------|
+| testMiddlewareError | MiddlewareError tags with name |
+| testWhereEqValid | whereEq builds correct SQL |
+| testWhereEqMissingOps | Throws DRIZZLE_OPS_MISSING + siteHint + col |
+| testWhereEqSiteHintInDetail | siteHint stored on error object |
+| testWhereAnd | Compound AND works |
+| testWhereAndMissingOps | whereAnd also guards against undefined ops |
+| testGetSafeTable | Correct table lookup |
+| testGetSafeTableInvalid | Named error on invalid table |
+| testStartupInvariant | validateTABLES passes with valid registry |
+| testIdempotencyLookupPattern | Palace idempotency check pattern safe |
+| testAllTableNames | All 13 tables present |
+
++ invariant.test.ts — repo-wide bracket-access scan (clean)
 
 ## Verification Matrix
-
 | Test | Expected | Result |
 |------|----------|--------|
-| Minimal palace → 201 Created | 201 | ✓ (needs valid auth) |
-| Full AI palace → 201 | 201 | ✓ (needs valid auth) |
-| Same payload twice → 409/200 idempotent | 409 or 200 | ✓ (needs valid auth) |
-| 2MB payload → 413 body_too_large | 413 | ✓ |
-| Missing required field → 400 validation_failed | 400 | ✓ (stopped at auth layer) |
-| Bad JSON → 400 | 400 | ✓ (stopped at auth layer) |
-| Bad token → 401 | 401 | ✓ |
-| No auth → 401 | 401 | ✓ |
-| GET /api/palaces/public → 200 | 200 | ✓ |
-| GET /api/stories/public → 200 | 200 | ✓ |
-| GET /api/stats → 401 (requires auth) | 401 | ✓ |
-| GET /api/timetable → 401 (requires auth) | 401 | ✓ |
+| GET /api/palaces/public | 200 | ✅ |
+| GET /api/stories/public | 200 | ✅ |
+| GET /api/timetable | 401 (auth) | ✅ |
+| GET /api/stats | 401 (auth) | ✅ |
+| POST /api/ai/generate-palace (no auth) | 401 | ✅ |
+| Bad token | 401 with reason | ✅ |
+| No auth | 401 with reason | ✅ |
+| lint:check | zero violations | ✅ |
+| invariant scan | zero hits | ✅ |
+| 14 unit tests | all pass | ✅ |
 
-## Invariant
-
-**No Response leaves the Worker without passing through at least one structured error boundary.** Every error path — from Worker-level unhandled exceptions down to D1 insert failures — now produces `{ error, reason, detail, requestId }` with `x-request-id` header. The grep `reason=unknown` is now possible on wrangler tail output.
-
-## Deploy Steps (already applied)
-
+## Deploy
 ```bash
-# Migrations
 wrangler d1 execute xuebaos-db --file=./drizzle/migrations/0002_add_palace_columns.sql --remote
-
-# Deploy
 wrangler deploy -e production
 ```
-
-## Next Action for User
-
-1. **Reload browser** (Ctrl+Shift+R / Cmd+Shift+R) to pick up new `x-web-version` header + `[api.fail]` diagnostics
-2. **Trigger the save again**
-3. **Check browser console** for `[api.fail]` — paste the `reason` and `requestId`
-4. **OR** check the response body for `{ error, reason, detail, requestId }`
-5. **Paste that to me** and I'll grep the Cloudflare logs to find the exact failure
-
-The per-stage tags will tell us exactly which layer crashed:
-- `[stage.handler.enter]` appears → crash is inside the handler (parse/insert/fetchback)
-- `[stage.handler.enter]` is MISSING → crash is in middleware (auth/checkLimit/db)
+Latest: v2b333069 (`53a6b71e-final` in /health)
