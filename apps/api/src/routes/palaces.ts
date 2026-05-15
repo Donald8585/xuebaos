@@ -569,6 +569,32 @@ palaces.delete("/:id", authMiddleware, async (c) => {
 });
 
 // ════════════════════════════════════════════════════════════════
+// Route-Level Error Handler — catches middleware failures before handler runs
+// ════════════════════════════════════════════════════════════════
+palaces.onError((err, c) => {
+  const requestId = crypto.randomUUID();
+  const msg = String((err as any)?.message ?? err ?? "Unknown error");
+  const reason = classifyDbError(err);
+
+  console.error("[palaces.route.fail]", JSON.stringify({
+    requestId,
+    reason,
+    method: c.req.method,
+    path: c.req.path,
+    msg: msg.slice(0, 300),
+    name: (err as any)?.name,
+    stack: (err as any)?.stack?.split("\n").slice(0, 5),
+  }));
+
+  return c.json({
+    error: "save_failed",
+    reason,
+    detail: msg.slice(0, 200),
+    requestId,
+  }, 500);
+});
+
+// ════════════════════════════════════════════════════════════════
 // Utility
 // ════════════════════════════════════════════════════════════════
 

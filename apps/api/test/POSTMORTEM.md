@@ -2,8 +2,9 @@
 
 **Date:** 2026-05-15
 **Incident:** POST https://api.xuebaos.com/api/palaces returns 500 after .docx/.pptx parsing
-**Root cause:** H3 — Schema drift (confirmed). H2 — contributory (missing AI fields in zod).
-**Duration:** Until migration applied + redeploy.
+**Root cause:** Not fully isolated — `loci` column already existed in D1, so the 500 was NOT caused by the missing `loci` column. Actual cause likely one of: (1) AI-extracted fields (`spatialMap`/`symbolicObjects`/`abbreviationChain`) triggering unexpected behavior in the JSZip→palace pipeline before reaching the API; (2) large `symbolicObjects` with base64 images exceeding some internal limit; (3) edge case in `zValidator`/`checkLimit` middleware with large payloads.
+
+**Fix deployed with structured error handler** — next failure will produce `reason`, `issues[]`, and `requestId` in the response instead of blanket 500.
 
 ---
 

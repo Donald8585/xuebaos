@@ -78,13 +78,43 @@ app.use("*", async (c, next) => {
 // Logger
 app.use("*", logger());
 
+// Version header — confirms which deployment is live
+const WORKER_VERSION = "b4d985a7-v2"; // bump on every deploy
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("X-Worker-Version", WORKER_VERSION);
+});
+
 // ════════════════════════════════════════════════════════════════
 // Database Middleware — Inject Drizzle DB on every request
 // ════════════════════════════════════════════════════════════════
 app.use("*", async (c, next) => {
-  const db = createDb(c.env.DB);
-  (c as any).set("db", db);
-  await next();
+  try {
+    if (!c.env?.DB) {
+      const requestId = crypto.randomUUID();
+      console.error("[db.middleware] DB binding undefined");
+      return c.json({
+        error: "internal_error",
+        reason: "db_binding_missing",
+        detail: "Database binding not configured",
+        requestId,
+      }, 500);
+    }
+    const db = createDb(c.env.DB);
+    (c as any).set("db", db);
+    await next();
+  } catch (e: any) {
+    const requestId = crypto.randomUUID();
+    console.error("[db.middleware.fail]", JSON.stringify({
+      requestId, msg: String(e?.message ?? "").slice(0, 200),
+    }));
+    return c.json({
+      error: "internal_error",
+      reason: "db_init_failed",
+      detail: String(e?.message ?? "").slice(0, 200),
+      requestId,
+    }, 500);
+  }
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -95,6 +125,7 @@ app.get("/api/health", async (c) => {
     status: "ok",
     app: c.env.APP_NAME || "XueBaOS",
     environment: c.env.ENVIRONMENT || "unknown",
+    version: WORKER_VERSION,
     timestamp: new Date().toISOString(),
   });
 });
@@ -156,18 +187,38 @@ app.put("/api/storage/upload/:key{(.+)}", async (c) => {
 // Error Handler (must be before export default)
 // ════════════════════════════════════════════════════════════════
 app.onError((err, c) => {
-  console.error(`Unhandled error: ${err.message}`, err.stack);
+  const requestId = crypto.randomUUID();
+  const msg = String((err as any)?.message ?? err ?? "Unknown error");
+  const stack = (err as any)?.stack?.split("\n").slice(0, 6) ?? [];
+
+  // Classify unhandled errors at the global level
+  const reason =
+    /no such column/i.test(msg) ? "schema_drift"
+    : /exceeded.*CPU|CPU.*time/i.test(msg) ? "cpu_exceeded"
+    : /Cannot read properties|undefined is not|TypeError/i.test(msg) ? "middleware_null_ref"
+    : /SQLITE_/i.test(msg) ? "db_error"
+    : /network|timeout|unreachable/i.test(msg) ? "db_unavailable"
+    : "unknown";
+
+  console.error("[global.error]", JSON.stringify({
+    requestId,
+    reason,
+    path: c.req.path,
+    method: c.req.method,
+    msg: msg.slice(0, 300),
+    stack: stack.slice(0, 5),
+  }));
 
   const env = c.env?.ENVIRONMENT;
   const isDev = env === "development" || env === "staging";
 
-  return c.json(
-    {
-      error: "Internal server error",
-      ...(isDev && { details: err.message, stack: err.stack }),
-    },
-    500
-  );
+  return c.json({
+    error: "internal_error",
+    reason,
+    detail: isDev ? msg.slice(0, 500) : "An unexpected error occurred",
+    requestId,
+    ...(isDev && { stack: stack.slice(0, 5) }),
+  }, 500);
 });
 
 // 404 handler

@@ -149,55 +149,71 @@ export function checkLimit(resource: ResourceType) {
   };
 
   return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
-    const internalUserId = c.get("internalUserId");
-    const db = c.get("db");
+    const requestId = crypto.randomUUID();
+    try {
+      const internalUserId = c.get("internalUserId");
+      const db = c.get("db");
 
-    const user = await db.query.users.findFirst({
-      where: (u: any, { eq }: any) => eq(u.id, internalUserId),
-    });
+      const user = await db.query.users.findFirst({
+        where: (u: any, { eq }: any) => eq(u.id, internalUserId),
+      });
 
-    const userTier = (user?.subscriptionTier || "free") as TierKey;
-    const hasActiveSub = user?.subscriptionEnds
-      ? new Date(user.subscriptionEnds) > new Date()
-      : false;
+      const userTier = (user?.subscriptionTier || "free") as TierKey;
+      const hasActiveSub = user?.subscriptionEnds
+        ? new Date(user.subscriptionEnds) > new Date()
+        : false;
 
-    const effectiveTier: TierKey = hasActiveSub ? userTier : "free";
-    const limits = PRICING_TIERS[effectiveTier];
-    const maxAllowed = limits[limitKey];
+      const effectiveTier: TierKey = hasActiveSub ? userTier : "free";
+      const limits = PRICING_TIERS[effectiveTier];
+      const maxAllowed = limits[limitKey];
 
-    // Infinity = unlimited
-    if (maxAllowed === Infinity) {
+      // Infinity = unlimited
+      if (maxAllowed === Infinity) {
+        c.set("userTier", effectiveTier);
+        await next();
+        return;
+      }
+
+      // Count current resources (this month for questions)
+      const { table, userCol } = tableMap[resource];
+      const allResources = await db.select().from(db.schema[table])
+        .where((u: any, { eq }: any) => eq(u[userCol], internalUserId));
+
+      let count = allResources.length;
+      if (resource === "questions") {
+        // Only count questions created this month
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        count = allResources.filter((q: any) =>
+          q.createdAt && new Date(q.createdAt) >= monthStart
+        ).length;
+      }
+
+      if (count >= maxAllowed) {
+        return c.json({
+          error: `You've reached the ${effectiveTier} tier limit of ${maxAllowed} ${resource}.`,
+          currentTier: effectiveTier,
+          limit: maxAllowed,
+          currentCount: count,
+          upgradeUrl: "/pricing",
+        }, 402);
+      }
+
       c.set("userTier", effectiveTier);
       await next();
-      return;
-    }
-
-    // Count current resources (this month for questions)
-    const { table, userCol } = tableMap[resource];
-    const allResources = await db.select().from(db.schema[table])
-      .where((u: any, { eq }: any) => eq(u[userCol], internalUserId));
-
-    let count = allResources.length;
-    if (resource === "questions") {
-      // Only count questions created this month
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      count = allResources.filter((q: any) =>
-        q.createdAt && new Date(q.createdAt) >= monthStart
-      ).length;
-    }
-
-    if (count >= maxAllowed) {
+    } catch (e: any) {
+      console.error(`[checkLimit.${resource}.fail]`, JSON.stringify({
+        requestId,
+        msg: String(e?.message ?? "").slice(0, 300),
+        name: e?.name,
+        stack: e?.stack?.split("\n").slice(0, 5),
+      }));
       return c.json({
-        error: `You've reached the ${effectiveTier} tier limit of ${maxAllowed} ${resource}.`,
-        currentTier: effectiveTier,
-        limit: maxAllowed,
-        currentCount: count,
-        upgradeUrl: "/pricing",
-      }, 402);
+        error: "internal_error",
+        reason: "limit_check_failed",
+        detail: String(e?.message ?? "").slice(0, 200),
+        requestId,
+      }, 500);
     }
-
-    c.set("userTier", effectiveTier);
-    await next();
   };
 }
