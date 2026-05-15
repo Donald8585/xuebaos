@@ -6,6 +6,8 @@
  * { reason: "middleware:<name>", stage: "middleware" }.
  */
 
+import { TABLES, type TableName } from "../db/schema";
+
 export class MiddlewareError extends Error {
   constructor(
     public middlewareName: string,
@@ -28,38 +30,85 @@ export class MiddlewareError extends Error {
  * .where((cols, { eq }) => ...) to receive undefined as the second
  * argument ("ops"). This wrapper guards against that:
  *
- *   db.select().from(table).where(whereEq("userId", uid, "checkLimit"))
+ *   db.select().from(table).where(whereEq("userId", uid, "checkLimit:palaces"))
  *
- * If ops is missing, it throws a named error including the callerTag:
- *   "drizzle ops missing — table arg may be invalid [caller: checkLimit]"
+ * If ops is missing, throws a named error:
+ *   [DRIZZLE_OPS_MISSING] [site=checkLimit:palaces] [col=userId]
  *
- * @param col - column name (dot-access on cols, not bracket)
- * @param value - value to compare
- * @param callerTag - human-readable tag for crash identification without stack
+ * @param col - column name (dot-access on cols object)
+ * @param value - value to compare against
+ * @param siteHint - human-readable tag for crash identification without stack
  */
-export function whereEq(col: string, value: unknown, callerTag?: string) {
-  return (_cols: any, ops: any) => {
-    if (!ops?.eq) {
-      const detail = callerTag ? ` [caller: ${callerTag}]` : "";
-      throw new Error(
-        `drizzle ops missing — table arg may be invalid (bracket-access on module namespace?)${detail}`
+export function whereEq<T = Record<string, unknown>>(
+  col: keyof T & string,
+  value: unknown,
+  siteHint?: string,
+) {
+  return (cols: T, ops: any) => {
+    if (!ops || typeof ops.eq !== "function") {
+      const err = new Error(
+        `drizzle ops missing — table arg may be invalid` +
+        ` (bracket-access on module namespace?)` +
+        (siteHint ? ` [site=${siteHint}]` : "") +
+        ` [col=${String(col)}]`
       );
+      (err as any).code = "DRIZZLE_OPS_MISSING";
+      (err as any).siteHint = siteHint ?? null;
+      throw err;
     }
-    return ops.eq(_cols[col], value);
+    return ops.eq(cols[col], value);
   };
 }
 
 /**
  * Safe Drizzle .where callback for compound AND conditions.
  */
-export function whereAnd(conditions: Array<(_cols: any, ops: any) => any>, callerTag?: string) {
-  return (_cols: any, ops: any) => {
-    if (!ops?.and) {
-      const detail = callerTag ? ` [caller: ${callerTag}]` : "";
-      throw new Error(
-        `drizzle ops missing — table arg may be invalid (bracket-access on module namespace?)${detail}`
+export function whereAnd<T = Record<string, unknown>>(
+  conditions: Array<(_cols: any, ops: any) => any>,
+  siteHint?: string,
+) {
+  return (cols: any, ops: any) => {
+    if (!ops || typeof ops.and !== "function") {
+      const err = new Error(
+        `drizzle ops missing — table arg may be invalid` +
+        ` (bracket-access on module namespace?)` +
+        (siteHint ? ` [site=${siteHint}]` : "")
       );
+      (err as any).code = "DRIZZLE_OPS_MISSING";
+      (err as any).siteHint = siteHint ?? null;
+      throw err;
     }
-    return ops.and(...conditions.map(c => c(_cols, ops)));
+    return ops.and(...conditions.map(c => c(cols, ops)));
   };
+}
+
+/**
+ * Typed table lookup — NEVER bracket-access db.schema or TABLES.
+ * Fails fast with a named error if the table doesn't exist.
+ *
+ *   db.select().from(table("memoryPalaces"))
+ */
+export function getSafeTable(name: TableName) {
+  const t = TABLES[name];
+  if (!t || typeof t !== "object") {
+    throw new Error(`unknown_or_invalid_table:${name}`);
+  }
+  return t;
+}
+
+/**
+ * Startup invariant — runs once on Worker init.
+ * Catches misconfigured imports before the first request.
+ */
+export function validateTABLES(): void {
+  const names = Object.keys(TABLES) as TableName[];
+  for (const name of names) {
+    const t = TABLES[name];
+    if (!t || typeof t !== "object") {
+      throw new Error(`TABLES.${name} is not a Drizzle table`);
+    }
+  }
+  if (names.length === 0) {
+    throw new Error("TABLES registry is empty — check schema imports");
+  }
 }

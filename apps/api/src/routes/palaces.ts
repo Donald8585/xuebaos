@@ -25,6 +25,7 @@ type FailureReason =
   | "ai_subcall_failed"
   | "cpu_exceeded"
   | "db_unavailable"
+  | "drizzle_table_invalid"
   | "unknown";
 
 function classifyDbError(e: unknown): FailureReason {
@@ -47,6 +48,9 @@ function classifyDbError(e: unknown): FailureReason {
       if (/unsupported type/i.test(causeMsg) || /unsupported type/i.test(msg)) return "json_bind";
     }
   }
+
+  // Custom error codes
+  if (code === "DRIZZLE_OPS_MISSING" || /drizzle ops missing/i.test(msg)) return "drizzle_table_invalid";
 
   if (/column.*not found/i.test(msg) || /no such column/i.test(msg)) return "schema_drift";
   if (/unsupported type/i.test(msg) || /JSON/i.test(name)) return "json_bind";
@@ -464,6 +468,9 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
     const reason = classifyDbError(e);
     logFailure("create.insert", internalUserId, bodyBytes, e, requestId);
 
+    const code = (e as any)?.code ?? null;
+    const siteHint = (e as any)?.siteHint ?? null;
+
     // Map D1 errors to user-facing responses
     const status = reason === "unique_violation" ? 409
       : reason === "fk_violation" ? 400
@@ -483,6 +490,8 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
           : reason === "db_unavailable"
             ? "Database temporarily unavailable — retry later"
             : e?.message ?? "Database write failed",
+      ...(code && { code }),
+      ...(siteHint && { siteHint }),
       requestId,
     }, status);
   }

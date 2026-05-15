@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { createDb, type Database } from "./db/index";
-import { MiddlewareError } from "./lib/errors";
+import { MiddlewareError, validateTABLES } from "./lib/errors";
+
+// Startup invariant — fails Worker init if TABLES registry is malformed
+validateTABLES();
 
 // ── Routes ──────────────────────────────────────────────────────
 import authRoutes from "./routes/auth";
@@ -80,7 +83,7 @@ app.use("*", async (c, next) => {
 app.use("*", logger());
 
 // Version header — confirms which deployment is live
-const WORKER_VERSION = "196d7084-tagged"; // bump on every deploy
+const WORKER_VERSION = "53a6b71e-final"; // bump on every deploy
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Worker-Version", WORKER_VERSION);

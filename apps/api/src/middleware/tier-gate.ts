@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import type { Env } from "../index";
 import { PRICING_TIERS, type TierKey } from "../services/stripe";
-import { TABLES, type TableName } from "../db/schema";
-import { MiddlewareError, whereEq } from "../lib/errors";
+import { type TableName } from "../db/schema";
+import { MiddlewareError, whereEq, getSafeTable } from "../lib/errors";
 
 /**
  * Tier gating middleware — enforce subscription limits across all endpoints.
@@ -153,9 +153,7 @@ const RESOURCE_TABLE: Record<ResourceType, TableName> = {
 export function checkLimit(resource: ResourceType) {
   const limitKey = LIMIT_KEY_MAP[resource];
   const tableName = RESOURCE_TABLE[resource];
-  const table = TABLES[tableName];
-
-  if (!table) throw new Error(`checkLimit: unknown table "${tableName}"`);
+  const table = getSafeTable(tableName);
 
   return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
     const requestId = crypto.randomUUID();
@@ -185,7 +183,7 @@ export function checkLimit(resource: ResourceType) {
 
       // Count current resources (dot-access only, whereEq guard)
       const allResources = await db.select().from(table)
-        .where(whereEq("userId", internalUserId, "checkLimit"));
+        .where(whereEq("userId", internalUserId, `checkLimit:${resource}`));
 
       let count = allResources.length;
       if (resource === "questions") {
