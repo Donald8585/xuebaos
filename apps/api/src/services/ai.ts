@@ -22,7 +22,7 @@ export async function deepseekChat(
   options?: { temperature?: number; maxTokens?: number; stream?: boolean }
 ): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000); // 25s timeout
+  const timeout = setTimeout(() => controller.abort(), 50000); // 50s timeout
 
   try {
     const resp = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {

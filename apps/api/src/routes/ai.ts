@@ -27,6 +27,7 @@ const generatePalaceSchema = z.object({
   topic: z.string().min(1).max(300),
   concepts: z.array(z.string()).min(1).max(100),
   count: z.number().int().min(1).max(50).optional(),
+  asyncMode: z.boolean().optional(),
 });
 
 const generateStorySchema = z.object({
@@ -92,8 +93,8 @@ ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSch
     const body = c.req.valid("json");
     const totalChars = body.concepts.reduce((sum, c) => sum + c.length, 0);
 
-    // Large payloads (>50KB) → async via queue to avoid Worker timeout
-    if (contentLength > 50000 || totalChars > 50000) {
+    // Large payloads (>30KB) or explicit async → via queue
+    if (body.asyncMode || contentLength > 30000 || totalChars > 30000) {
       const jobId = crypto.randomUUID();
       await c.env.AI_QUEUE.send({
         type: "generate-palace",
@@ -109,8 +110,16 @@ ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSch
     const result = await generatePalace(c.env, body.topic, body.concepts, body.count);
     return c.json({ ...result, requestId });
   } catch (err) {
-    console.error("[ai.generate-palace.fail]", JSON.stringify({ requestId, msg: String(err).slice(0, 200) }));
-    return c.json({ error: "ai_generation_failed", reason: "ai_error", stage: "handler", detail: String(err).slice(0, 200), requestId }, 502);
+    const msg = String(err).slice(0, 200);
+    const isTimeout = msg.includes("AbortError") || msg.includes("aborted");
+    console.error("[ai.generate-palace.fail]", JSON.stringify({ requestId, msg, isTimeout }));
+    return c.json({
+      error: "ai_generation_failed",
+      reason: isTimeout ? "ai_timeout" : "ai_error",
+      stage: "handler",
+      detail: isTimeout ? "AI generation timed out — your document may be too large. Try a shorter text or split into sections." : msg,
+      requestId,
+    }, isTimeout ? 504 : 502);
   }
 });
 

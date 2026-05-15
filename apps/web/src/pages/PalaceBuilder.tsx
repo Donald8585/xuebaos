@@ -79,6 +79,7 @@ export default function PalaceBuilder() {
           topic: subject || 'Study Material',
           concepts: [content],
           count: 20,
+          asyncMode: inputMode === 'upload', // file uploads always async
         }),
         signal: controller.signal,
       });
@@ -136,7 +137,7 @@ export default function PalaceBuilder() {
       setStep(3);
       toast.success(`Generated ${generatedLoci.length} memory loci!`);
     } catch (err: any) {
-      // Beacon: send failure telemetry so we know ERR_FAILED happened
+      // Beacon: send failure telemetry
       if (err.name === 'AbortError' || err.name === 'TypeError') {
         try {
           await fetch(`${API_BASE}/_beacon`, {
@@ -147,8 +148,7 @@ export default function PalaceBuilder() {
               fileSize: content?.length || 0,
               durationMs: 45000,
               effectiveType: (navigator as any)?.connection?.effectiveType || 'unknown',
-              errorName: err.name,
-              errorMsg: String(err.message || '').slice(0, 200),
+              errorName: err.name, errorMsg: String(err.message || '').slice(0, 200),
               userAgent: navigator.userAgent.slice(0, 200),
               sentAt: new Date().toISOString(),
             }),
@@ -157,7 +157,9 @@ export default function PalaceBuilder() {
       }
 
       if (err.name === 'AbortError') {
-        toast.error('Request timed out — try a shorter document or split into sections');
+        toast.error('Request timed out — your document may be too large. Try shorter text or split into sections.');
+      } else if (err.status === 504) {
+        toast.error('AI generation timed out — processing in background. Check your palaces shortly.');
       } else {
         toast.error(`Generation failed: ${err.message || 'Unknown error'}`);
       }
