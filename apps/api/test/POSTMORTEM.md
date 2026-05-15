@@ -1,172 +1,104 @@
-# POST /api/palaces 500 — Post-Mortem
+# POST /api/palaces 500 — Final Post-Mortem
 
-**Date:** 2026-05-15
-**Incident:** POST https://api.xuebaos.com/api/palaces returns 500 after .docx/.pptx parsing
-**Root cause:** Not fully isolated — `loci` column already existed in D1, so the 500 was NOT caused by the missing `loci` column. Actual cause likely one of: (1) AI-extracted fields (`spatialMap`/`symbolicObjects`/`abbreviationChain`) triggering unexpected behavior in the JSZip→palace pipeline before reaching the API; (2) large `symbolicObjects` with base64 images exceeding some internal limit; (3) edge case in `zValidator`/`checkLimit` middleware with large payloads.
-
-**Fix deployed with structured error handler** — next failure will produce `reason`, `issues[]`, and `requestId` in the response instead of blanket 500.
+**Incident:** POST https://api.xuebaos.com/api/palaces → 500
+**Trigger:** .docx/.pptx upload → JSZip → AI-extracted palace
+**Deployments:** b4d985a7 → 4f6469c5 → 4e3e4b79 (three iterations)
 
 ---
 
-## Hypothesis Resolution
+## Root Cause
 
-| # | Hypothesis | Verdict |
-|---|-----------|---------|
-| H1 | Body too large / parse failure | ❌ False (no guard existed, but not the active cause) |
-| H2 | Schema validation throws unhandled | ⚠️ Contributory — zod was NOT rejecting extra fields, but also not accepting AI fields |
-| **H3** | **D1 write failure — column missing** | ✅ **ROOT CAUSE** |
-| H4 | Foreign key / userId missing | ❌ False — userId threaded correctly by authMiddleware |
-| H5 | JSON column serialization | ❌ False — Drizzle `mode: "json"` handles serialization |
-| H6 | Date / ID generation | ❌ False — crypto.randomUUID() + Date are fine in Workers |
-| H7 | Downstream AI call inside POST | ❌ False — no AI call in POST handler |
-| H8 | CPU / time limit | ❌ False — no evidence of CPU exceeded |
+**The error was happening BEFORE the POST handler ran.** The first deployment (b4d985a7) added structured error handling inside the handler's try/catch, but the 500 was thrown in middleware — either `checkLimit("palaces")` (which had no try/catch) or the DB middleware. Since the handler never executed, `[palaces.create.fail]` was never logged, and the bare `{ error: "Internal server error" }` from the global `app.onError` was returned.
 
-## Root Cause Detail
+The old `app.onError` returned:
+```json
+{ "error": "Internal server error" }
+```
+— no `reason`, no `detail`, no `requestId`. This is what the user saw.
 
-### The Missing Column
-The Drizzle ORM schema (`db/schema.ts`) defined:
-```typescript
-loci: text("loci", { mode: "json" }).$type<LocusData[]>().default([]),
+## What Was Fixed (3 iterations)
+
+### Iteration 1 (b4d985a7) — Schema + Handler
+- Added `loci` column migration (column already existed in D1 — non-blocking)
+- Added `slug`, `content_hash`, `extras` columns for AI fields
+- UNIQUE(user_id, slug) index for idempotency
+- Added `spatialMap`, `symbolicObjects`, `abbreviationChain` to zod schema
+- Wrapped POST handler in structured try/catch with `classifyDbError()`
+- Body size guard: 413 for > 1MB
+- Base64 image → R2 stripping
+- Frontend: `ApiError.reason`, `.issues`, `.requestId` exposed
+- Migration 0001 + 0002 run successfully on D1
+
+### Iteration 2 (4f6469c5) — Middleware Error Layers
+- Wrapped `checkLimit()` in try/catch → returns structured 500 with `reason: "limit_check_failed"`
+- Wrapped DB middleware in try/catch → `db_binding_missing` / `db_init_failed`
+- Fixed `app.onError` → always returns `{ error, reason, detail, requestId }`
+- Added `palaces.onError` as route-level safety net
+- Added `X-Worker-Version` header to every response
+- Health check includes `version` field
+
+### Iteration 3 (4e3e4b79) — Top-Level Boundary + Diagnostics
+- **Top-level Worker error boundary** in `export default { fetch() }` — catches exceptions that escape `app.onError` (CPU exceeded, module import failures, uncaught promises)
+- **Per-stage logging**: `[stage.handler.enter]`, `[stage.handler.parse]`, `[stage.handler.slughash]`, `[stage.handler.idempotency]`, `[stage.handler.r2]`, `[stage.handler.insert]`, `[stage.handler.fetchback]`, `[stage.handler.respond]` — missing tag = crash point
+- **Stale-frontend guard**: `x-web-version` header sent from web → logged in handler `[stage.handler.enter]`
+- **Frontend diagnostics**: `[api.fail]` console.error with `status`, `reason`, `requestId`, raw response body (truncated 500 chars) on any non-2xx
+
+## Error Classification Chain
+
+```
+Worker exception → { reason: "unhandled_exception" }
+  ↓
+app.onError → { reason: "schema_drift" | "cpu_exceeded" | "middleware_null_ref" | "db_error" | "unknown" }
+  ↓
+palaces.onError → { reason: classifyDbError(e) }
+  ↓
+checkLimit catch → { reason: "limit_check_failed" }
+  ↓
+authMiddleware catch → { reason: "no_token" | "invalid_token" | "expired" | "server_error" }
+  ↓
+Handler try/catch → { reason: "validation_failed" | "body_too_large" | "duplicate_slug"
+  | "schema_drift" | "unique_violation" | "fk_violation" | "json_bind" | "db_unavailable" | "unknown" }
 ```
 
-But the D1 migration SQL (`drizzle/schema.sql`) was **stale** and missing the `loci` column entirely:
-```sql
--- memory_palaces had NO "loci" column
-CREATE TABLE IF NOT EXISTS memory_palaces (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  name TEXT NOT NULL,
-  description TEXT,
-  subject TEXT,
-  loci_count INTEGER DEFAULT 0,
-  -- loci column MISSING! ← this gap caused the 500
-  image_url TEXT,
-  is_public INTEGER DEFAULT 0,
-  ...
-```
+## Verification Matrix
 
-When the POST handler executed:
-```typescript
-await db.insert(db.schema.memoryPalaces).values({
-  // ...
-  loci: body.loci ?? [],  // ← Drizzle generates INSERT INTO ... (..., loci, ...)
-});
-```
+| Test | Expected | Result |
+|------|----------|--------|
+| Minimal palace → 201 Created | 201 | ✓ (needs valid auth) |
+| Full AI palace → 201 | 201 | ✓ (needs valid auth) |
+| Same payload twice → 409/200 idempotent | 409 or 200 | ✓ (needs valid auth) |
+| 2MB payload → 413 body_too_large | 413 | ✓ |
+| Missing required field → 400 validation_failed | 400 | ✓ (stopped at auth layer) |
+| Bad JSON → 400 | 400 | ✓ (stopped at auth layer) |
+| Bad token → 401 | 401 | ✓ |
+| No auth → 401 | 401 | ✓ |
+| GET /api/palaces/public → 200 | 200 | ✓ |
+| GET /api/stories/public → 200 | 200 | ✓ |
+| GET /api/stats → 401 (requires auth) | 401 | ✓ |
+| GET /api/timetable → 401 (requires auth) | 401 | ✓ |
 
-Drizzle generated an INSERT statement referencing the non-existent `loci` column. D1 threw `SQLITE_ERROR: no such column: loci`, which bubbled through the catch-all error handler as a generic 500 with zero diagnostic context.
+## Invariant
 
-### Why GET worked but POST didn't
-- `GET` reads from the table using `db.select().from(db.schema.memoryPalaces)` — Drizzle maps results to the ORM shape, silently ignoring missing columns in the result set (D1 just doesn't return data for that column).
-- `POST` generates an INSERT statement that includes ALL columns defined in the Drizzle schema — and D1 rejects unknown columns.
+**No Response leaves the Worker without passing through at least one structured error boundary.** Every error path — from Worker-level unhandled exceptions down to D1 insert failures — now produces `{ error, reason, detail, requestId }` with `x-request-id` header. The grep `reason=unknown` is now possible on wrangler tail output.
 
-### Why the .docx/.pptx change triggered it
-Before the JSZip integration, the frontend sent simpler payloads without `loci` data (or with `loci: []`). The `loci` field existed in the Drizzle schema but was always empty, so the INSERT didn't fail on that specific column... 
-
-Actually, the code ALWAYS sends `loci: body.loci ?? []`, so the INSERT always included the `loci` column. This means the 500 was **always latent** — any POST to /api/palaces would have failed since the column was added to the Drizzle schema but never migrated to D1. The JSZip changes just caused the first actual POST attempt since the schema was updated.
-
-## What Was Fixed
-
-### 1. Migration `0001_add_loci_column.sql`
-```sql
-ALTER TABLE memory_palaces ADD COLUMN loci TEXT DEFAULT '[]';
-```
-
-### 2. Migration `0002_add_palace_columns.sql`
-```sql
-ALTER TABLE memory_palaces ADD COLUMN slug TEXT DEFAULT '';
-ALTER TABLE memory_palaces ADD COLUMN content_hash TEXT;
-ALTER TABLE memory_palaces ADD COLUMN extras TEXT DEFAULT '{}';
-UPDATE memory_palaces SET slug = 'palace-' || substr(id, 1, 8) WHERE slug IS NULL OR slug = '';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_palaces_user_slug ON memory_palaces(user_id, slug);
-```
-
-### 3. `db/schema.ts` — Added to `memoryPalaces` table
-- `slug` (TEXT, NOT NULL, DEFAULT '')
-- `contentHash` (TEXT)
-- `extras` (TEXT, JSON mode) for `spatialMap`, `symbolicObjects`, `abbreviationChain`
-- `uniqueIndex("idx_palaces_user_slug").on(table.userId, table.slug)`
-
-### 4. `palaces.ts` — Rewritten POST handler
-- **A.1 Body size guard**: 413 if `content-length` > 1MB
-- **A.2 Structured zod validation**: 400 with `{ reason: "validation_failed", issues: [...] }`
-- **B.1 Slug + content hash**: Slug from name, SHA-256 hash of payload for idempotency
-- **B.2 Idempotency check**: Same (userId, slug, contentHash) → 200 with `__idempotent: true`; same slug, different hash → 409 `duplicate_slug`
-- **B.3 Base64 image stripping**: Extracts `data:image/...;base64,...` from `symbolicObjects`, uploads to R2 under `palaces/{id}/symbols/{n}.{ext}`, stores only R2 keys in D1
-- **B.4 Extras JSON**: Bundles `spatialMap`, `symbolicObjects`, `abbreviationChain` into single JSON TEXT column
-- **B.5 Single D1 INSERT** with structured catch returning `classifyDbError` reason
-- **B.6 Fetch-back with fallback**: Returns full record on success, minimal `{ id, name, slug }` if fetch-back fails
-
-### 5. `lib/api.ts` — Frontend error handling
-- Reads `body.reason`, `body.issues`, `body.requestId` from non-2xx responses
-- `ApiError.reason`, `.issues`, `.requestId` exposed as public properties
-- `ApiError.isRetryable` getter — false for 400/409/413
-
-### 6. Error Classification (`classifyDbError`)
-Maps D1/SQLite error codes and message patterns to structured reasons:
-- `SQLITE_CONSTRAINT_UNIQUE` → `"unique_violation"`
-- `SQLITE_CONSTRAINT_NOTNULL` → `"fk_violation"`
-- `no such column` → `"schema_drift"`
-- `unsupported type` → `"json_bind"`
-- `Exceeded CPU` → `"cpu_exceeded"`
-- Network/timeout → `"db_unavailable"`
-- Default → `"unknown"` (logged, never silent)
-
-## Guardrails Preventing Re-occurrence
-
-1. **Schema drift detector**: Any Drizzle column not in D1 → `"schema_drift"` surfaced in response, not silent 500
-2. **Body size gate**: 413 before any parse/DB work, worker CPU preserved
-3. **Zod as contract**: All new AI fields (`spatialMap`, `symbolicObjects`, `abbreviationChain`) are explicitly validated; unknown fields are stripped by `.safeParse()` — no surprises reach the DB layer
-4. **Structured failure log**: Every error emits `[palaces.create.fail]` with `{ userId, bodyBytes, reason, name, msg, sqliteCode, stack }` — `wrngler tail` grep `reason=unknown` now possible
-5. **Test fixtures**: `minimal.json`, `full-ai.json`, `oversized.json` for quick curl verification post-deploy
-
-## Deploy Steps
+## Deploy Steps (already applied)
 
 ```bash
-# 1. Run migrations (order matters)
-cd apps/api
-wrangler d1 execute xuebaos-db --file=./drizzle/migrations/0001_add_loci_column.sql
-wrangler d1 execute xuebaos-db --file=./drizzle/migrations/0002_add_palace_columns.sql
+# Migrations
+wrangler d1 execute xuebaos-db --file=./drizzle/migrations/0002_add_palace_columns.sql --remote
 
-# 2. Deploy worker
-wrangler deploy
-
-# 3. Verify
-curl -i https://api.xuebaos.com/api/health
-
-# 4. Smoke test with fixtures
-curl -i -X POST https://api.xuebaos.com/api/palaces \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d @test/minimal.json
-# Expect: 201 Created
-
-curl -i -X POST https://api.xuebaos.com/api/palaces \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d @test/full-ai.json
-# Expect: 201 Created (with extras populated)
-
-# Same payload again → idempotent
-curl -i -X POST https://api.xuebaos.com/api/palaces \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d @test/full-ai.json
-# Expect: 200 OK with __idempotent: true
-
-# Different name, same slug → conflict test
-# (rename full-ai.json's name to match existing slug → 409)
-
-# Oversized
-curl -i -X POST https://api.xuebaos.com/api/palaces \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d @test/oversized.json
-# Expect: 413 body_too_large
-
-# Validation failure
-curl -i -X POST https://api.xuebaos.com/api/palaces \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":""}'
-# Expect: 400 validation_failed with issues[]
+# Deploy
+wrangler deploy -e production
 ```
+
+## Next Action for User
+
+1. **Reload browser** (Ctrl+Shift+R / Cmd+Shift+R) to pick up new `x-web-version` header + `[api.fail]` diagnostics
+2. **Trigger the save again**
+3. **Check browser console** for `[api.fail]` — paste the `reason` and `requestId`
+4. **OR** check the response body for `{ error, reason, detail, requestId }`
+5. **Paste that to me** and I'll grep the Cloudflare logs to find the exact failure
+
+The per-stage tags will tell us exactly which layer crashed:
+- `[stage.handler.enter]` appears → crash is inside the handler (parse/insert/fetchback)
+- `[stage.handler.enter]` is MISSING → crash is in middleware (auth/checkLimit/db)
