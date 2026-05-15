@@ -136,6 +136,26 @@ export default function PalaceBuilder() {
       setStep(3);
       toast.success(`Generated ${generatedLoci.length} memory loci!`);
     } catch (err: any) {
+      // Beacon: send failure telemetry so we know ERR_FAILED happened
+      if (err.name === 'AbortError' || err.name === 'TypeError') {
+        try {
+          await fetch(`${API_BASE}/_beacon`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              route: '/api/ai/generate-palace',
+              fileSize: content?.length || 0,
+              durationMs: 45000,
+              effectiveType: (navigator as any)?.connection?.effectiveType || 'unknown',
+              errorName: err.name,
+              errorMsg: String(err.message || '').slice(0, 200),
+              userAgent: navigator.userAgent.slice(0, 200),
+              sentAt: new Date().toISOString(),
+            }),
+          });
+        } catch { /* beacon best-effort */ }
+      }
+
       if (err.name === 'AbortError') {
         toast.error('Request timed out — try a shorter document or split into sections');
       } else {
@@ -276,6 +296,18 @@ export default function PalaceBuilder() {
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
+
+                          // File size limits
+                          const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+                          const WARN_SIZE = 5 * 1024 * 1024;  // 5MB
+                          if (file.size > MAX_SIZE) {
+                            toast.error(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max: 20MB.`);
+                            return;
+                          }
+                          if (file.size > WARN_SIZE) {
+                            toast.success('Large file detected — will be processed in background.', { duration: 4000 });
+                          }
+
                           setUploadedFileName(file.name);
                           try {
                             let text = '';

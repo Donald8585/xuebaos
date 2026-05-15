@@ -28,6 +28,7 @@ import conceptChainRoutes from "./routes/concept-chains";
 import exportRoutes from "./routes/exports";
 import communityRoutes from "./routes/community";
 import settingsRoutes from "./routes/settings";
+import uploadRoutes from "./routes/uploads";
 import technocraticRoutes from "./routes/technocratic";
 import statsRoutes from "./routes/stats";
 import clerkWebhookRoutes from "./routes/clerk-webhook";
@@ -189,6 +190,9 @@ app.route("/api/exports", exportRoutes);
 app.route("/api/community", communityRoutes);
 // Note: public /p/:slug is at /api/community/p/:slug
 app.route("/api/settings", settingsRoutes);
+app.route("/api/uploads", uploadRoutes);
+app.route("/api", uploadRoutes);  // _beacon at /api/_beacon
+app.route("/debug", uploadRoutes); // /debug/cors
 app.route("/api/technocratic", technocraticRoutes);
 app.route("/api/stats", statsRoutes);
 app.route("/api/clerk", clerkWebhookRoutes);
