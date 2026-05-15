@@ -231,7 +231,43 @@ app.notFound((c) => {
 // ════════════════════════════════════════════════════════════════
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return app.fetch(request, env, ctx);
+    const requestId = crypto.randomUUID();
+    const url = new URL(request.url);
+
+    // Per-stage logging
+    const stage = (tag: string) => console.log(`[stage.${tag}]`, JSON.stringify({
+      requestId, method: request.method, path: url.pathname,
+    }));
+
+    try {
+      // Inject requestId into env for downstream use
+      stage("entry");
+      return await app.fetch(request, env, ctx);
+    } catch (e: any) {
+      // This catches exceptions that escape app.onError —
+      // Worker-level crashes, CPU exceeded, module import failures, etc.
+      console.error("[worker.unhandled]", JSON.stringify({
+        requestId,
+        url: request.url,
+        method: request.method,
+        name: e?.name,
+        msg: String(e?.message ?? "").slice(0, 500),
+        stack: e?.stack?.split("\n").slice(0, 8).join(" | "),
+      }));
+      return new Response(JSON.stringify({
+        error: "internal_error",
+        reason: "unhandled_exception",
+        detail: String(e?.message ?? "unknown").slice(0, 200),
+        requestId,
+      }), {
+        status: 500,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId,
+          "x-worker-version": WORKER_VERSION,
+        },
+      });
+    }
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env, ctx: ExecutionContext): Promise<void> {

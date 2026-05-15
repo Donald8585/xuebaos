@@ -308,7 +308,13 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   const requestId = crypto.randomUUID();
   const internalUserId = c.get("internalUserId");
   const db = c.get("db");
+  const webVersion = c.req.header("x-web-version") || "unknown";
   let bodyBytes = 0;
+
+  console.log("[stage.handler.enter]", JSON.stringify({
+    requestId, userId: internalUserId, webVersion,
+    contentLength: c.req.header("content-length"),
+  }));
 
   // ── A.1 Body size guard (before any parsing) ──────────────────
   const contentLength = c.req.header("content-length");
@@ -328,6 +334,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   // ── A.2 Parse & validate body ─────────────────────────────────
   let body: z.infer<typeof createPalaceSchema>;
   try {
+    console.log("[stage.handler.parse]", JSON.stringify({ requestId }));
     const raw = await c.req.json();
     const parsed = createPalaceSchema.safeParse(raw);
     if (!parsed.success) {
@@ -355,6 +362,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   }
 
   // ── B.1 Generate slug & content hash ──────────────────────────
+  console.log("[stage.handler.slughash]", JSON.stringify({ requestId }));
   const slug = slugify(body.name);
   const payload = {
     name: body.name,
@@ -368,6 +376,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   const contentHash = await hashPayload(payload);
 
   // ── B.2 Idempotency check — existing (userId, slug)? ──────────
+  console.log("[stage.handler.idempotency]", JSON.stringify({ requestId, slug }));
   const existing = await db.query.memoryPalaces.findFirst({
     where: (p, { and, eq }) => and(
       eq(p.userId, internalUserId),
@@ -378,6 +387,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   if (existing) {
     if (existing.contentHash === contentHash) {
       // Same content — idempotent return
+      console.log("[stage.handler.respond]", JSON.stringify({ requestId, outcome: "idempotent" }));
       return c.json({
         ...existing,
         __idempotent: true,
@@ -399,6 +409,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   const r2Uploads: Array<{ key: string; data: ArrayBuffer; mime: string }> = [];
 
   if (body.symbolicObjects?.length) {
+    console.log("[stage.handler.r2]", JSON.stringify({ requestId, imageCount: body.symbolicObjects.filter(o => o.imageBase64).length }));
     const result = stripBase64Images(body.symbolicObjects, palaceId);
     cleanedSymbolicObjects = result.clean;
     r2Uploads.push(...result.r2Uploads);
@@ -427,6 +438,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
 
   // ── B.5 Single D1 INSERT ──────────────────────────────────────
   try {
+    console.log("[stage.handler.insert]", JSON.stringify({ requestId }));
     await db.insert(db.schema.memoryPalaces).values({
       id: palaceId,
       userId: internalUserId,
@@ -472,6 +484,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
 
   // ── B.6 Fetch & return created record ─────────────────────────
   try {
+    console.log("[stage.handler.fetchback]", JSON.stringify({ requestId }));
     const created = await db.query.memoryPalaces.findFirst({
       where: (p, { eq }) => eq(p.id, palaceId),
     });
@@ -485,6 +498,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
       }, 500);
     }
 
+    console.log("[stage.handler.respond]", JSON.stringify({ requestId, outcome: "created" }));
     return c.json(created, 201);
   } catch (e: any) {
     logFailure("create.fetchback", internalUserId, bodyBytes, e, requestId);
