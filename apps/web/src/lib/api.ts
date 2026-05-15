@@ -25,6 +25,9 @@ async function fetchApi<T = unknown>(
   options: FetchOptions = {}
 ): Promise<T> {
   const token = await getToken();
+  if (!token && !options.headers?.['skip-auth' as keyof HeadersInit]) {
+    throw new ApiError(401, 'no_clerk_token');
+  }
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),

@@ -10,33 +10,39 @@ const FOUNDER_EMAIL = "fiverrkroft@gmail.com";
 async function verifyClerkToken(token: string, secretKey: string | undefined): Promise<{ sub: string; email?: string }> {
   // 1. Parse JWT
   const parts = token.split(".");
-  if (parts.length !== 3) throw new Error("Invalid JWT format");
+  if (parts.length !== 3) throw Object.assign(new Error("Invalid JWT format"), { reason: "invalid_token" });
 
   const header = JSON.parse(atob(parts[0]));
   const payload = JSON.parse(atob(parts[1]));
   const signature = parts[2];
 
   const kid = header.kid;
-  if (!kid) throw new Error("No kid in JWT header");
+  if (!kid) throw Object.assign(new Error("No kid in JWT header"), { reason: "invalid_token" });
 
   // 2. Validate expiration
   const now = Math.floor(Date.now() / 1000);
   if (payload.exp && now >= payload.exp) {
-    throw new Error(`Token expired at ${new Date(payload.exp * 1000).toISOString()}`);
+    throw Object.assign(new Error("Token expired"), { reason: "expired" });
   }
   if (payload.nbf && now < payload.nbf) {
-    throw new Error("Token not yet valid");
+    throw Object.assign(new Error("Token not yet valid"), { reason: "not_yet_valid" });
   }
 
   // 3. Validate issuer
   const iss = payload.iss;
   if (!iss || !iss.includes("clerk.xuebaos.com")) {
-    throw new Error(`Invalid issuer: ${iss}`);
+    throw Object.assign(new Error(`Invalid issuer: ${iss}`), { reason: "invalid_issuer" });
+  }
+
+  // 4. Validate authorized party
+  const azp = payload.azp;
+  if (azp && !["https://xuebaos.com"].includes(azp)) {
+    throw Object.assign(new Error(`Invalid azp: ${azp}`), { reason: "azp_mismatch" });
   }
 
   // 4. Fetch JWKS from clerk.xuebaos.com (known reachable)
   const jwksResp = await fetch("https://clerk.xuebaos.com/.well-known/jwks.json");
-  if (!jwksResp.ok) throw new Error(`JWKS fetch failed: ${jwksResp.status}`);
+  if (!jwksResp.ok) throw Object.assign(new Error(`JWKS fetch failed: ${jwksResp.status}`), { reason: "clerk_unreachable" });
   const jwks = await jwksResp.json() as { keys: Array<Record<string, string>> };
   const jwk = jwks.keys.find((k) => k.kid === kid);
   if (!jwk) throw new Error(`Key ${kid} not found in JWKS`);
@@ -83,10 +89,10 @@ export async function authMiddleware(
 ) {
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return c.json({ error: "Missing or invalid Authorization header" }, 401);
+    return c.json({ error: "unauthorized", reason: "no_token" }, 401);
   }
   const token = authHeader.slice(7);
-  if (!token) return c.json({ error: "Empty token" }, 401);
+  if (!token) return c.json({ error: "unauthorized", reason: "no_token" }, 401);
 
   try {
     const { sub: clerkUserId, email } = await verifyClerkToken(token, c.env.CLERK_SECRET_KEY);
@@ -124,8 +130,8 @@ export async function authMiddleware(
     }
     await next();
   } catch (err: any) {
-    console.error("[AUTH]", err?.message);
-    return c.json({ error: "Authentication failed", debug: err?.message }, 401);
+    console.error("[AUTH]", err?.message, err?.reason);
+    return c.json({ error: "unauthorized", reason: err?.reason || "unknown", message: err?.message }, 401);
   }
 }
 
