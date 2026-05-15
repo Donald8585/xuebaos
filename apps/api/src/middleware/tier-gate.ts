@@ -185,7 +185,7 @@ export function checkLimit(resource: ResourceType) {
 
       // Count current resources (dot-access only, whereEq guard)
       const allResources = await db.select().from(table)
-        .where(whereEq("userId", internalUserId));
+        .where(whereEq("userId", internalUserId, "checkLimit"));
 
       let count = allResources.length;
       if (resource === "questions") {

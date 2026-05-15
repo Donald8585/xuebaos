@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ── Users ──────────────────────────────────────────────────────────
@@ -42,9 +42,9 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
-}, (table) => ({
-  userSlugIdx: uniqueIndex("idx_palaces_user_slug").on(table.userId, table.slug),
-}));
+});
+
+// Note: UNIQUE(user_id, slug) index created by migration 0002 — not in Drizzle schema
 
 export interface LocusData {
   concept: string;
