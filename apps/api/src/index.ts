@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { createDb } from "./db/index";
 import { MiddlewareError, validateTABLES } from "./lib/errors";
@@ -65,28 +64,47 @@ const app = new Hono<{ Bindings: Env }>();
 // Global Middleware
 // ════════════════════════════════════════════════════════════════
 
-// CORS
+// CORS — bulletproof: dedicated OPTIONS handler BEFORE any middleware
+const ALLOWED_ORIGINS = ["https://xuebaos.com", "http://localhost:5173", "http://localhost:3000"];
+
+function originAllowed(origin: string | null): string {
+  if (!origin) return ALLOWED_ORIGINS[0];
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  if (origin.endsWith(".xuebaos.com")) return origin;
+  if (origin.endsWith(".xuebaos.pages.dev")) return origin;
+  return ALLOWED_ORIGINS[0];
+}
+
+function corsHeaders(origin: string | null): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": originAllowed(origin),
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization,content-type,x-web-version,x-request-id",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
+    "Access-Control-Expose-Headers": "x-request-id,x-worker-version",
+    "Vary": "Origin",
+  };
+}
+
+// Dedicated OPTIONS handler — runs BEFORE auth, logger, everything
+app.options("*", (c) => {
+  const origin = c.req.header("Origin");
+  return new Response(null, { status: 204, headers: corsHeaders(origin || null) });
+});
+
+// CORS middleware for actual responses (non-OPTIONS)
 app.use("*", async (c, next) => {
-  const origin = c.env.CORS_ORIGIN || "https://xuebaos.com";
-  const corsMiddleware = cors({
-    origin: (o) => {
-      if (
-        o.endsWith(".xuebaos.com") ||
-        o === "https://xuebaos.com" ||
-        o.startsWith("http://localhost:") ||
-        o.startsWith("http://127.0.0.1:")
-      ) {
-        return o;
+  await next();
+  const origin = c.req.header("Origin");
+  if (origin && c.res) {
+    const h = corsHeaders(origin);
+    for (const [k, v] of Object.entries(h)) {
+      if (k !== "Access-Control-Allow-Methods" && k !== "Access-Control-Max-Age") {
+        c.res.headers.set(k, v);
       }
-      return origin;
-    },
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    exposeHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
-    maxAge: 86400,
-    credentials: true,
-  });
-  return corsMiddleware(c, next);
+    }
+  }
 });
 
 // Logger
@@ -304,6 +322,7 @@ export default {
           "content-type": "application/json",
           "x-request-id": requestId,
           "x-worker-version": WORKER_VERSION,
+          ...corsHeaders(null),
         },
       });
     }
