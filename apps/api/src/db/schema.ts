@@ -366,3 +366,34 @@ export const methods = sqliteTable("methods", {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+// ════════════════════════════════════════════════════════════════
+// Typed Table Registry — NEVER bracket-access db.schema
+// ════════════════════════════════════════════════════════════════
+/** All Drizzle table definitions keyed by stable name.
+ *  Use this for dynamic table lookups instead of bracket-access on db.schema.
+ *  Bracket access on module namespaces breaks Drizzle's .where() callbacks. */
+export const TABLES = {
+  users,
+  memoryPalaces,
+  mnemonicStories,
+  symbols,
+  studySessions,
+  timetables,
+  questions,
+  payments,
+  annotations,
+  readingVault,
+  recallSessions,
+  technocraticAudits,
+  methods,
+} as const;
+
+export type TableName = keyof typeof TABLES;
+
+/** Safe table lookup — throws at call site if name is invalid */
+export function getTable(name: TableName): typeof TABLES[TableName] {
+  const t = TABLES[name];
+  if (!t) throw new Error(`unknown_table:${name}`);
+  return t;
+}

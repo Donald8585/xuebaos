@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { Env } from "../index";
 import { PRICING_TIERS, type TierKey } from "../services/stripe";
+import { TABLES, type TableName } from "../db/schema";
 
 /**
  * Tier gating middleware — enforce subscription limits across all endpoints.
@@ -135,21 +136,25 @@ export function requireFeature(feature: keyof typeof TIER_FEATURES.xueba) {
  */
 type ResourceType = "palaces" | "stories" | "questions";
 
+const LIMIT_KEY_MAP: Record<ResourceType, "maxPalaces" | "maxStories" | "maxQuestions"> = {
+  palaces: "maxPalaces",
+  stories: "maxStories",
+  questions: "maxQuestions",
+};
+
+// Direct table refs from typed registry — NEVER bracket-access db.schema
+const RESOURCE_TABLE: Record<ResourceType, TableName> = {
+  palaces: "memoryPalaces",
+  stories: "mnemonicStories",
+  questions: "questions",
+};
+
 export function checkLimit(resource: ResourceType) {
-  const limitKey = resource === "palaces"
-    ? "maxPalaces"
-    : resource === "stories"
-    ? "maxStories"
-    : "maxQuestions";
+  const limitKey = LIMIT_KEY_MAP[resource];
+  const tableName = RESOURCE_TABLE[resource];
+  const table = TABLES[tableName];
 
-  // Direct schema references — bracket access on module namespace
-  // (db.schema["memoryPalaces"]) breaks Drizzle's .where() callback
-  const getTable = (db: any) =>
-    resource === "palaces" ? db.schema.memoryPalaces
-    : resource === "stories" ? db.schema.mnemonicStories
-    : db.schema.questions;
-
-  const userCol = "userId";
+  if (!table) throw new Error(`checkLimit: unknown table "${tableName}"`);
 
   return async (c: Context<{ Bindings: Env; Variables: Record<string, any> }>, next: () => Promise<void>) => {
     const requestId = crypto.randomUUID();
@@ -177,14 +182,12 @@ export function checkLimit(resource: ResourceType) {
         return;
       }
 
-      // Count current resources (this month for questions)
-      const table = getTable(db);
+      // Count current resources — dot-access only, no bracket access
       const allResources = await db.select().from(table)
-        .where((u: any, { eq }: any) => eq(u[userCol], internalUserId));
+        .where((u: any, { eq }: any) => eq(u.userId, internalUserId));
 
       let count = allResources.length;
       if (resource === "questions") {
-        // Only count questions created this month
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
         count = allResources.filter((q: any) =>
