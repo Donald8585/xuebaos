@@ -1,0 +1,48 @@
+{
+  "name": "Renaissance Anatomy",
+  "description": "Memory palace for human anatomy using Renaissance villa imagery",
+  "subject": "Biology",
+  "lociCount": 12,
+  "loci": [
+    { "concept": "Skull", "description": "Entrance hall chandelier shaped like cranium", "mnemonic": "22 bones suspended", "position": 0 },
+    { "concept": "Spine", "description": "Grand staircase with 33 vertebral steps", "mnemonic": "C7-T12-L5-S5-C4", "position": 1 },
+    { "concept": "Heart", "description": "Central fountain pumping red-tinted water", "mnemonic": "4 chambers = 4 spouts", "position": 2 },
+    { "concept": "Lungs", "description": "Twin bellows in the forge room", "mnemonic": "Bronchial tree as wall mural", "position": 3 },
+    { "concept": "Stomach", "description": "Kitchen cauldron with acid-etched tiles", "mnemonic": "Rugae = tile wrinkles", "position": 4 },
+    { "concept": "Liver", "description": "Alchemy lab with filtration apparatus", "mnemonic": "500 functions = 500 vials", "position": 5 },
+    { "concept": "Kidneys", "description": "Twin filtration pools in the garden", "mnemonic": "Nephrons = lily pads", "position": 6 },
+    { "concept": "Brain", "description": "Library with neural-network ceiling fresco", "mnemonic": "Lobes = reading rooms", "position": 7 },
+    { "concept": "Eyes", "description": "Observatory with twin telescopes", "mnemonic": "Rods/cones = lens filters", "position": 8 },
+    { "concept": "Ears", "description": "Music room with cochlear-spiral staircase", "mnemonic": "Ossicles = tuning forks", "position": 9 },
+    { "concept": "Skin", "description": "Tapestry gallery wrapping entire floor", "mnemonic": "Dermis layers = weave patterns", "position": 10 },
+    { "concept": "Bones", "description": "Armory with 206 weapon displays", "mnemonic": "Types = weapon classes", "position": 11 }
+  ],
+  "spatialMap": [
+    { "id": "floor1", "name": "Ground Floor", "x": 0, "y": 0, "width": 800, "height": 600 },
+    { "id": "entrance", "name": "Entrance Hall", "x": 50, "y": 50, "width": 200, "height": 200, "parentId": "floor1", "metadata": { "lighting": "natural" } },
+    { "id": "staircase", "name": "Grand Staircase", "x": 300, "y": 50, "width": 100, "height": 500, "parentId": "floor1" },
+    { "id": "fountain", "name": "Central Fountain", "x": 450, "y": 300, "width": 150, "height": 150, "parentId": "floor1" },
+    { "id": "kitchen", "name": "Kitchen (East Wing)", "x": 650, "y": 50, "width": 120, "height": 200, "parentId": "floor1" },
+    { "id": "floor2", "name": "Upper Floor", "x": 0, "y": 650, "width": 800, "height": 600, "parentId": "floor1" },
+    { "id": "library", "name": "Library", "x": 50, "y": 700, "width": 300, "height": 250, "parentId": "floor2" },
+    { "id": "observatory", "name": "Observatory", "x": 400, "y": 700, "width": 180, "height": 180, "parentId": "floor2" },
+    { "id": "forge", "name": "Forge Room", "x": 620, "y": 700, "width": 150, "height": 200, "parentId": "floor2" },
+    { "id": "garden", "name": "Garden", "x": 50, "y": 1000, "width": 700, "height": 200, "parentId": "floor2", "metadata": { "season": "spring" } }
+  ],
+  "symbolicObjects": [
+    { "concept": "Neuron", "symbol": "Fiber-optic vine", "description": "Wraps around library pillars, glowing at synapses", "category": "biology" },
+    { "concept": "DNA", "symbol": "Double-helix banister", "description": "Spirals along grand staircase", "category": "biology" },
+    { "concept": "ATP", "symbol": "Golden coin fountain", "description": "Energy currency raining from central fountain", "category": "chemistry" },
+    { "concept": "Mitosis", "symbol": "Split mirror", "description": "Hallway mirror that duplicates reflections", "category": "biology" },
+    { "concept": "Enzyme", "symbol": "Key-shaped door handle", "description": "Lock-and-key mechanism on every door", "category": "chemistry" }
+  ],
+  "abbreviationChain": [
+    { "original": "Cranial", "abbreviation": "CRN", "step": 0, "rule": "first 3 consonants" },
+    { "original": "Spinal Cord Organization", "abbreviation": "SCO", "step": 1, "rule": "initialism" },
+    { "original": "Autonomic Nervous System", "abbreviation": "ANS", "step": 2, "rule": "initialism" },
+    { "original": "Sympathetic vs Parasympathetic", "abbreviation": "S>P", "step": 3, "rule": "opposition" },
+    { "original": "Cardiovascular System", "abbreviation": "CVS", "step": 4, "rule": "initialism" }
+  ],
+  "tags": ["anatomy", "renaissance", "biology", "medicine"],
+  "isPublic": false
+}

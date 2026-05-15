@@ -50,8 +50,14 @@ async function fetchApi<T = unknown>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new ApiError(response.status, error.detail || error.message || 'Request failed');
+    const body = await response.json().catch(() => null);
+    const reason = body?.reason ?? null;
+    const detail = body?.detail ?? body?.message ?? body?.error ?? response.statusText;
+    const err = new ApiError(response.status, detail);
+    (err as any).reason = reason;
+    (err as any).issues = body?.issues ?? null;
+    (err as any).requestId = body?.requestId ?? null;
+    throw err;
   }
 
   if (response.status === 204) return undefined as T;
@@ -59,9 +65,24 @@ async function fetchApi<T = unknown>(
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  public reason: string | null;
+  public issues: Array<{ path: string; message: string; code: string }> | null;
+  public requestId: string | null;
+
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
     this.name = 'ApiError';
+    this.reason = null;
+    this.issues = null;
+    this.requestId = null;
+  }
+
+  /** Don't auto-retry for these status codes */
+  get isRetryable(): boolean {
+    return this.status !== 400 && this.status !== 409 && this.status !== 413;
   }
 }
 
@@ -89,8 +110,13 @@ export const api = {
       body: formData,
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new ApiError(response.status, error.detail || 'Upload failed');
+      const body = await response.json().catch(() => null);
+      const reason = body?.reason ?? null;
+      const detail = body?.detail ?? body?.message ?? body?.error ?? 'Upload failed';
+      const err = new ApiError(response.status, detail);
+      (err as any).reason = reason;
+      (err as any).requestId = body?.requestId ?? null;
+      throw err;
     }
     return response.json();
   },

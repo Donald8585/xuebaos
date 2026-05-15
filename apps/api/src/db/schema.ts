@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, blob } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ── Users ──────────────────────────────────────────────────────────
@@ -26,10 +26,13 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
     .notNull()
     .references(() => users.id),
   name: text("name").notNull(),
+  slug: text("slug").notNull().default(""),
+  contentHash: text("content_hash"),
   description: text("description"),
   subject: text("subject"),
   lociCount: integer("loci_count").default(0),
   loci: text("loci", { mode: "json" }).$type<LocusData[]>().default([]),
+  extras: text("extras", { mode: "json" }).$type<PalaceExtras>().default({}),
   imageUrl: text("image_url"),
   isPublic: integer("is_public", { mode: "boolean" }).default(false),
   tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
@@ -39,13 +42,48 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => ({
+  userSlugIdx: uniqueIndex("idx_palaces_user_slug").on(table.userId, table.slug),
+}));
 
 export interface LocusData {
   concept: string;
   description: string;
   mnemonic: string;
   position?: number;
+}
+
+export interface PalaceExtras {
+  spatialMap?: SpatialMapNode[];
+  symbolicObjects?: SymbolicObject[];
+  abbreviationChain?: AbbreviationStep[];
+}
+
+export interface SpatialMapNode {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  parentId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SymbolicObject {
+  concept: string;
+  symbol: string;
+  description?: string;
+  imageKey?: string;       // R2 key (base64 stripped before D1 write)
+  imageUrl?: string;        // Public URL (computed at read time)
+  category?: string;
+}
+
+export interface AbbreviationStep {
+  original: string;
+  abbreviation: string;
+  step: number;
+  rule?: string;
 }
 
 // ── Mnemonic Stories ───────────────────────────────────────────────
