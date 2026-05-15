@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import type { Env } from "../index";
+import { MiddlewareError } from "../lib/errors";
 
 interface RateLimitEntry {
   count: number;
@@ -68,6 +69,7 @@ export function rateLimiter(maxRequests: number = 60, windowSeconds: number = 60
 
       await next();
     } catch (e: any) {
+      const wrapped = new MiddlewareError("rateLimiter", e);
       console.error("[rateLimit.fail]", JSON.stringify({
         requestId,
         msg: String(e?.message ?? "").slice(0, 200),
@@ -75,7 +77,8 @@ export function rateLimiter(maxRequests: number = 60, windowSeconds: number = 60
       }));
       return c.json({
         error: "internal_error",
-        reason: "rate_limit_error",
+        reason: "middleware:rateLimiter",
+        stage: "middleware",
         detail: String(e?.message ?? "").slice(0, 200),
         requestId,
       }, 500);

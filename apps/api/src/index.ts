@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { createDb, type Database } from "./db/index";
+import { MiddlewareError } from "./lib/errors";
 
 // ── Routes ──────────────────────────────────────────────────────
 import authRoutes from "./routes/auth";
@@ -79,7 +80,7 @@ app.use("*", async (c, next) => {
 app.use("*", logger());
 
 // Version header — confirms which deployment is live
-const WORKER_VERSION = "1bb4755e-fix"; // bump on every deploy
+const WORKER_VERSION = "196d7084-tagged"; // bump on every deploy
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Worker-Version", WORKER_VERSION);
@@ -191,9 +192,13 @@ app.onError((err, c) => {
   const msg = String((err as any)?.message ?? err ?? "Unknown error");
   const stack = (err as any)?.stack?.split("\n").slice(0, 6) ?? [];
 
-  // Classify unhandled errors at the global level
-  const reason =
-    /no such column/i.test(msg) ? "schema_drift"
+  // If a MiddlewareError, use its explicit tagging
+  const isMiddleware = err instanceof MiddlewareError;
+  const stage = isMiddleware ? "middleware" : "unknown";
+
+  const reason = isMiddleware
+    ? `middleware:${(err as MiddlewareError).middlewareName}`
+    : /no such column/i.test(msg) ? "schema_drift"
     : /exceeded.*CPU|CPU.*time/i.test(msg) ? "cpu_exceeded"
     : /Cannot read properties|undefined is not|TypeError/i.test(msg) ? "middleware_null_ref"
     : /SQLITE_/i.test(msg) ? "db_error"
@@ -203,6 +208,7 @@ app.onError((err, c) => {
   console.error("[global.error]", JSON.stringify({
     requestId,
     reason,
+    stage,
     path: c.req.path,
     method: c.req.method,
     msg: msg.slice(0, 300),
@@ -215,6 +221,7 @@ app.onError((err, c) => {
   return c.json({
     error: "internal_error",
     reason,
+    stage,
     detail: isDev ? msg.slice(0, 500) : "An unexpected error occurred",
     requestId,
     ...(isDev && { stack: stack.slice(0, 5) }),
@@ -246,17 +253,26 @@ export default {
     } catch (e: any) {
       // This catches exceptions that escape app.onError —
       // Worker-level crashes, CPU exceeded, module import failures, etc.
+      const isMiddleware = e instanceof MiddlewareError;
+      const stage = isMiddleware ? "middleware" : "worker";
+      const reason = isMiddleware
+        ? `middleware:${(e as MiddlewareError).middlewareName}`
+        : "unhandled_exception";
+
       console.error("[worker.unhandled]", JSON.stringify({
         requestId,
         url: request.url,
         method: request.method,
+        reason,
+        stage,
         name: e?.name,
         msg: String(e?.message ?? "").slice(0, 500),
         stack: e?.stack?.split("\n").slice(0, 8).join(" | "),
       }));
       return new Response(JSON.stringify({
         error: "internal_error",
-        reason: "unhandled_exception",
+        reason,
+        stage,
         detail: String(e?.message ?? "unknown").slice(0, 200),
         requestId,
       }), {

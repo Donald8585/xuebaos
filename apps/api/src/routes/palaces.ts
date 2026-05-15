@@ -324,6 +324,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
       return c.json({
         error: "save_failed",
         reason: "body_too_large",
+        stage: "handler",
         maxBytes: MAX_BODY_BYTES,
         actualBytes: bodyBytes,
         requestId,
@@ -341,6 +342,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
       return c.json({
         error: "save_failed",
         reason: "validation_failed",
+        stage: "handler",
         issues: parsed.error.issues.map(i => ({
           path: i.path.join("."),
           message: i.message,
@@ -356,6 +358,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
     return c.json({
       error: "save_failed",
       reason: "validation_failed",
+      stage: "handler",
       detail: "Failed to parse request body as JSON",
       requestId,
     }, 400);
@@ -397,6 +400,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
     return c.json({
       error: "save_failed",
       reason: "duplicate_slug",
+      stage: "handler",
       detail: `A palace with slug "${slug}" already exists. Use a different name.`,
       existingId: existing.id,
       requestId,
@@ -471,6 +475,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
     return c.json({
       error: "save_failed",
       reason,
+      stage: "handler",
       detail: reason === "schema_drift"
         ? "Database schema mismatch — run migrations: drizzle/migrations/*.sql"
         : reason === "unique_violation"
@@ -493,6 +498,7 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
       return c.json({
         error: "save_failed",
         reason: "unknown",
+        stage: "handler",
         detail: "Record not found after successful insert",
         requestId,
       }, 500);
@@ -603,6 +609,7 @@ palaces.onError((err, c) => {
   return c.json({
     error: "save_failed",
     reason,
+    stage: "route",
     detail: msg.slice(0, 200),
     requestId,
   }, 500);

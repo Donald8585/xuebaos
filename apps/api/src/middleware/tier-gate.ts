@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { Env } from "../index";
 import { PRICING_TIERS, type TierKey } from "../services/stripe";
 import { TABLES, type TableName } from "../db/schema";
+import { MiddlewareError, whereEq } from "../lib/errors";
 
 /**
  * Tier gating middleware — enforce subscription limits across all endpoints.
@@ -182,9 +183,9 @@ export function checkLimit(resource: ResourceType) {
         return;
       }
 
-      // Count current resources — dot-access only, no bracket access
+      // Count current resources (dot-access only, whereEq guard)
       const allResources = await db.select().from(table)
-        .where((u: any, { eq }: any) => eq(u.userId, internalUserId));
+        .where(whereEq("userId", internalUserId));
 
       let count = allResources.length;
       if (resource === "questions") {
@@ -208,6 +209,7 @@ export function checkLimit(resource: ResourceType) {
       c.set("userTier", effectiveTier);
       await next();
     } catch (e: any) {
+      const wrapped = new MiddlewareError("checkLimit", e);
       console.error(`[checkLimit.${resource}.fail]`, JSON.stringify({
         requestId,
         msg: String(e?.message ?? "").slice(0, 300),
@@ -216,7 +218,8 @@ export function checkLimit(resource: ResourceType) {
       }));
       return c.json({
         error: "internal_error",
-        reason: "limit_check_failed",
+        reason: "middleware:checkLimit",
+        stage: "middleware",
         detail: String(e?.message ?? "").slice(0, 200),
         requestId,
       }, 500);
