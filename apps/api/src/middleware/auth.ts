@@ -45,9 +45,13 @@ async function verifyClerkToken(token: string, secretKey: string | undefined): P
   if (!jwksResp.ok) throw Object.assign(new Error(`JWKS fetch failed: ${jwksResp.status}`), { reason: "clerk_unreachable" });
   const jwks = await jwksResp.json() as { keys: Array<Record<string, string>> };
   const jwk = jwks.keys.find((k) => k.kid === kid);
-  if (!jwk) throw new Error(`Key ${kid} not found in JWKS`);
+  if (!jwk) throw Object.assign(new Error(`Key ${kid} not found in JWKS`), { reason: "jwks_key_not_found" });
 
-  // 5. Import public key via Web Crypto (native in Workers)
+  // 5. Validate algorithm
+  const alg = header.alg;
+  if (alg && !["RS256"].includes(alg)) throw Object.assign(new Error(`Unsupported algorithm: ${alg}`), { reason: "unsupported_alg" });
+
+  // 6. Import public key via Web Crypto (native in Workers)
   const cryptoKey = await crypto.subtle.importKey(
     "jwk",
     { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: jwk.alg || "RS256" },
@@ -66,7 +70,7 @@ async function verifyClerkToken(token: string, secretKey: string | undefined): P
     data
   );
 
-  if (!valid) throw new Error("Invalid token signature");
+  if (!valid) throw Object.assign(new Error("Invalid token signature"), { reason: "invalid_signature" });
 
   return {
     sub: payload.sub,
