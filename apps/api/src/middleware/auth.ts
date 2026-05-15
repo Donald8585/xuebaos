@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import type { Env } from "../index";
+import { eq } from "drizzle-orm";
 
 const FOUNDER_EMAIL = "fiverrkroft@gmail.com";
 
@@ -126,7 +127,7 @@ export async function authMiddleware(
         if (isFounder && user.subscriptionTier !== "xueshen") {
           await db.update(db.schema.users).set({
             subscriptionTier: "xueshen", subscriptionEnds: new Date("2099-12-31"), updatedAt: new Date(),
-          }).where((u: any, { eq }: any) => eq(u.clerkId, clerkUserId));
+          }).where(eq(db.schema.users.clerkId, clerkUserId));
         }
         c.set("internalUserId", user.id);
         c.set("userTier", isFounder ? "xueshen" : (user.subscriptionTier || "free"));

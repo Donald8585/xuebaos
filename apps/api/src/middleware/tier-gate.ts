@@ -1,8 +1,9 @@
 import type { Context } from "hono";
 import type { Env } from "../index";
+import { eq } from "drizzle-orm";
 import { PRICING_TIERS, type TierKey } from "../services/stripe";
 import { type TableName } from "../db/schema";
-import { MiddlewareError, whereEq, getSafeTable } from "../lib/errors";
+import { MiddlewareError, getSafeTable } from "../lib/errors";
 
 /**
  * Tier gating middleware — enforce subscription limits across all endpoints.
@@ -181,9 +182,9 @@ export function checkLimit(resource: ResourceType) {
         return;
       }
 
-      // Count current resources (dot-access only, whereEq guard)
-      const allResources = await db.select().from(table)
-        .where(whereEq("userId", internalUserId, `checkLimit:${resource}`));
+      // Count current resources — Drizzle direct eq(), no callback
+      const allResources = await db.select().from(table as any)
+        .where(eq((table as any).userId, internalUserId));
 
       let count = allResources.length;
       if (resource === "questions") {

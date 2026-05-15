@@ -83,7 +83,7 @@ app.use("*", async (c, next) => {
 app.use("*", logger());
 
 // Version header — confirms which deployment is live
-const WORKER_VERSION = "2b333069-final"; // bump on every deploy
+const WORKER_VERSION = "30fe576e-eq"; // bump on every deploy
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Worker-Version", WORKER_VERSION);
