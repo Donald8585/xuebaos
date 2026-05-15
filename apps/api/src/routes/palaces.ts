@@ -274,7 +274,7 @@ palaces.get("/public", zValidator("query", paginationSchema), async (c) => {
 // ════════════════════════════════════════════════════════════════
 // GET /api/palaces/:id — Get single palace
 // ════════════════════════════════════════════════════════════════
-palaces.get("/:id", async (c) => {
+palaces.get("/:id", authMiddleware, async (c) => {
   const id = c.req.param("id");
   const db = c.get("db");
 
