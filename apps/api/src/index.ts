@@ -21,6 +21,7 @@ import analyticsRoutes from "./routes/analytics";
 import annotationRoutes from "./routes/annotations";
 import readingVaultRoutes from "./routes/reading-vault";
 import recallArenaRoutes from "./routes/recall-arena";
+import walkthroughRoutes from "./routes/walkthroughs";
 import technocraticRoutes from "./routes/technocratic";
 import statsRoutes from "./routes/stats";
 import clerkWebhookRoutes from "./routes/clerk-webhook";
@@ -85,7 +86,7 @@ app.use("*", async (c, next) => {
 app.use("*", logger());
 
 // Version header — confirms which deployment is live
-const WORKER_VERSION = "30fe576e-eq"; // bump on every deploy
+const WORKER_VERSION = "81f6b6f4-m1"; // bump on every deploy
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Worker-Version", WORKER_VERSION);
@@ -154,6 +155,7 @@ app.route("/api/analytics", analyticsRoutes);
 app.route("/api/annotations", annotationRoutes);
 app.route("/api/reading-vault", readingVaultRoutes);
 app.route("/api/recall-arena", recallArenaRoutes);
+app.route("/api/walkthroughs", walkthroughRoutes);
 app.route("/api/technocratic", technocraticRoutes);
 app.route("/api/stats", statsRoutes);
 app.route("/api/clerk", clerkWebhookRoutes);

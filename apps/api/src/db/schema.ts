@@ -67,6 +67,79 @@ export const aiJobs = sqliteTable("ai_jobs", {
     .default(sql`(unixepoch())`),
 });
 
+// ── Walkthroughs ───────────────────────────────────────────────────
+export const walkthroughs = sqliteTable("walkthroughs", {
+  id: text("id").primaryKey(),
+  palaceId: text("palace_id")
+    .notNull()
+    .references(() => memoryPalaces.id),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  durationMs: integer("duration_ms").default(0),
+  transcript: text("transcript", { mode: "json" }).$type<WalkthroughEvent[]>(),
+  audioKey: text("audio_key"),
+  recallScore: real("recall_score"),
+  lociVisited: integer("loci_visited").default(0),
+  lociCorrect: integer("loci_correct").default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export interface WalkthroughEvent {
+  locusIndex: number;
+  action: "visited" | "recalled" | "forgot" | "skipped";
+  ts: number; // relative ms from start
+}
+
+// ── Chats ──────────────────────────────────────────────────────────
+export const chats = sqliteTable("chats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  title: text("title").notNull().default("New Chat"),
+  messages: text("messages", { mode: "json" }).$type<ChatMessage[]>().default([]),
+  contextPalaceId: text("context_palace_id").references(() => memoryPalaces.id),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  ts: string;
+}
+
+// ── Concept Chains ─────────────────────────────────────────────────
+export const conceptChains = sqliteTable("concept_chains", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  rootConcept: text("root_concept").notNull(),
+  chainJson: text("chain_json", { mode: "json" }).$type<ConceptChainData>().default({}),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export interface ConceptChainData {
+  nodes?: Array<{ id: string; label: string; level: number }>;
+  edges?: Array<{ source: string; target: string; relation: string }>;
+}
+
 export interface LocusData {
   concept: string;
   description: string;
@@ -429,6 +502,9 @@ export const TABLES = {
   technocraticAudits,
   methods,
   aiJobs,
+  walkthroughs,
+  chats,
+  conceptChains,
 } as const;
 
 export type TableName = keyof typeof TABLES;

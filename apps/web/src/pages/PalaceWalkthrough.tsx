@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Maximize, Minimize,
   Eye, EyeOff, Check, X, Flag, Loader2, Save,
+  Play, Square, Timer, Footprints,
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import { Button } from '@/components/ui/button';
@@ -154,6 +155,71 @@ export default function PalaceWalkthrough() {
     });
   }, [saveLayout]);
 
+  // ── M1.3: Walk Mode — recording walkthrough ────────────────
+  const [walkMode, setWalkMode] = useState(false);
+  const [walkId, setWalkId] = useState<string | null>(null);
+  const [walkTimer, setWalkTimer] = useState(0);
+  const [isWalking, setIsWalking] = useState(false);
+  const [walkEvents, setWalkEvents] = useState<Array<{ locusIndex: number; action: string; ts: number }>>([]);
+  const [walkScore, setWalkScore] = useState<number | null>(null);
+  const walkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const walkStartRef = useRef<number>(0);
+
+  const startWalk = useCallback(async () => {
+    if (!id || !getToken) return;
+    try {
+      const token = await getToken();
+      const resp = await fetch(`${API_BASE}/walkthroughs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ palaceId: id }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setWalkId(data.id);
+      setIsWalking(true);
+      setWalkEvents([]);
+      setWalkScore(null);
+      walkStartRef.current = Date.now();
+      walkTimerRef.current = setInterval(() => setWalkTimer(Date.now() - walkStartRef.current), 100);
+    } catch (err) { toast.error('Failed to start walkthrough'); }
+  }, [id, getToken]);
+
+  const recordWalkEvent = useCallback(async (locusIndex: number, action: string) => {
+    if (!walkId || !getToken) return;
+    const ts = Date.now() - walkStartRef.current;
+    const event = { locusIndex, action, ts };
+    setWalkEvents(prev => [...prev, event]);
+    try {
+      const token = await getToken();
+      await fetch(`${API_BASE}/walkthroughs/${walkId}/event`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(event),
+      });
+    } catch (err) { console.error('[walk.event]', err); }
+  }, [walkId, getToken]);
+
+  const finishWalk = useCallback(async () => {
+    if (!walkId || !getToken) return;
+    if (walkTimerRef.current) clearInterval(walkTimerRef.current);
+    setIsWalking(false);
+    const durationMs = Date.now() - walkStartRef.current;
+    try {
+      const token = await getToken();
+      const resp = await fetch(`${API_BASE}/walkthroughs/${walkId}/finish`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ durationMs, transcript: walkEvents }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setWalkScore(data.recallScore);
+      toast.success(`Walk complete! Score: ${data.recallScore}%`);
+    } catch (err) { toast.error('Failed to finish walkthrough'); }
+  }, [walkId, getToken, walkEvents]);
+
+  // Cleanup timer on unmount
+  useEffect(() => () => { if (walkTimerRef.current) clearInterval(walkTimerRef.current); }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -205,7 +271,20 @@ export default function PalaceWalkthrough() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={quizMode ? 'warning' : 'secondary'}>{quizMode ? '🧠 Quiz' : '📖 Study'}</Badge>
+          <Badge variant={walkMode ? 'accent' : quizMode ? 'warning' : 'secondary'}>
+            {walkMode ? '🚶 Walk' : quizMode ? '🧠 Quiz' : '📖 Study'}
+          </Badge>
+          {!walkMode && !isWalking && (
+            <Button variant="ghost" size="sm" onClick={() => { setWalkMode(true); startWalk(); }}>
+              <Footprints size={14} className="mr-1" /> Walk
+            </Button>
+          )}
+          {isWalking && (
+            <div className="flex items-center gap-2 text-xs">
+              <Timer size={14} className="text-emerald-400" />
+              <span className="text-emerald-400 font-mono">{(walkTimer / 1000).toFixed(1)}s</span>
+            </div>
+          )}
           <Button variant="ghost" size="icon" onClick={() => setIsFullscreen(!isFullscreen)}>
             {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
           </Button>
@@ -344,7 +423,7 @@ export default function PalaceWalkthrough() {
           </Button>
         )}
       </div>
-      {quizMode && (
+      {quizMode && !walkMode && (
         <div className="flex gap-3 justify-center">
           <Button variant="outline" onClick={handleForgot} className="border-rose-500/30 text-rose-400 hover:bg-rose-500/10">
             <X size={16} className="mr-2" />Forgot
@@ -353,6 +432,29 @@ export default function PalaceWalkthrough() {
             <Check size={16} className="mr-2" />Remembered
           </Button>
         </div>
+      )}
+
+      {/* M1.3: Walk mode controls */}
+      {isWalking && (
+        <div className="flex gap-3 justify-center">
+          <Button variant="outline" onClick={() => recordWalkEvent(currentLocusIndex, 'forgot')} className="border-rose-500/30 text-rose-400 hover:bg-rose-500/10">
+            <X size={16} className="mr-2" />Forgot
+          </Button>
+          <Button variant="outline" onClick={() => recordWalkEvent(currentLocusIndex, 'visited')}>
+            <Eye size={16} className="mr-2" />Visited
+          </Button>
+          <Button onClick={() => { recordWalkEvent(currentLocusIndex, 'recalled'); if (currentLocusIndex < loci.length - 1) nextLocus(); else finishWalk(); }}>
+            <Check size={16} className="mr-2" />Recalled
+          </Button>
+        </div>
+      )}
+
+      {walkScore !== null && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-center p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+          <p className="text-lg font-bold text-emerald-400">Walk Score: {walkScore}%</p>
+          <p className="text-xs text-slate-400 mt-1">{walkEvents.filter(e => e.action === 'recalled').length} recalled / {walkEvents.length} events</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => { setWalkMode(false); setWalkScore(null); }}>Back to Study</Button>
+        </motion.div>
       )}
     </div>
   );
