@@ -33,6 +33,8 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
   lociCount: integer("loci_count").default(0),
   loci: text("loci", { mode: "json" }).$type<LocusData[]>().default([]),
   extras: text("extras", { mode: "json" }).$type<PalaceExtras>().default({}),
+  spatialMap: text("spatial_map", { mode: "json" }).$type<SpatialMapEntry[]>().default([]),
+  lociSymbols: text("loci_symbols", { mode: "json" }).$type<Record<string, LocusSymbol>>().default({}),
   imageUrl: text("image_url"),
   isPublic: integer("is_public", { mode: "boolean" }).default(false),
   tags: text("tags", { mode: "json" }).$type<string[]>().default([]),
@@ -45,6 +47,25 @@ export const memoryPalaces = sqliteTable("memory_palaces", {
 });
 
 // Note: UNIQUE(user_id, slug) index created by migration 0002 — not in Drizzle schema
+
+// ── AI Jobs ────────────────────────────────────────────────────────
+export const aiJobs = sqliteTable("ai_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  jobType: text("job_type").notNull(),
+  status: text("status").notNull().default("queued"),
+  payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>(),
+  result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
+  error: text("error"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
 
 export interface LocusData {
   concept: string;
@@ -68,6 +89,26 @@ export interface SpatialMapNode {
   height?: number;
   parentId?: string;
   metadata?: Record<string, unknown>;
+}
+
+/** Per-locus spatial position within the palace layout */
+export interface SpatialMapEntry {
+  locusIndex: number;   // index into the loci array
+  x: number;
+  y: number;
+  z?: number;           // z-index/layer
+  roomId?: string;      // which room/zone
+  rotation?: number;    // degrees
+}
+
+/** AI-generated symbolic object per locus */
+export interface LocusSymbol {
+  imageKey?: string;     // R2 key
+  imageUrl?: string;     // public URL (computed at read time)
+  prompt: string;
+  style?: string;        // minimalist, chinese-ink, cyberpunk, photoreal
+  generatedAt?: number;  // unix timestamp
+  model?: string;        // which AI model
 }
 
 export interface SymbolicObject {
@@ -387,6 +428,7 @@ export const TABLES = {
   recallSessions,
   technocraticAudits,
   methods,
+  aiJobs,
 } as const;
 
 export type TableName = keyof typeof TABLES;

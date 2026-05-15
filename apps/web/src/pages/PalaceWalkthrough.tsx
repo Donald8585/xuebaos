@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Maximize, Minimize,
-  Eye, EyeOff, Check, X, Flag, Loader2,
+  Eye, EyeOff, Check, X, Flag, Loader2, Save,
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,15 @@ interface Locus {
   mnemonic: string;
 }
 
+interface SpatialEntry {
+  locusIndex: number;
+  x: number;
+  y: number;
+  z?: number;
+  roomId?: string;
+  rotation?: number;
+}
+
 interface Palace {
   id: string;
   name: string;
@@ -34,6 +43,7 @@ interface Palace {
   loci_count: number;
   subject: string;
   isPublic: boolean;
+  spatialMap?: SpatialEntry[];
 }
 
 export default function PalaceWalkthrough() {
@@ -52,6 +62,9 @@ export default function PalaceWalkthrough() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'spatial'>('list');
+  const [spatialMap, setSpatialMap] = useState<SpatialEntry[]>([]);
+  const [isSavingLayout, setIsSavingLayout] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const fetchPalace = async () => {
@@ -69,6 +82,13 @@ export default function PalaceWalkthrough() {
           : rawLoci;
         setPalace({ ...data, loci });
         setTotalLoci(loci.length);
+        // Load existing spatial map or initialize grid layout
+        const existingMap = data.spatialMap || [];
+        setSpatialMap(existingMap.length > 0 ? existingMap : loci.map((_: any, i: number) => ({
+          locusIndex: i,
+          x: 10 + (i % 4) * 95,
+          y: 10 + Math.floor(i / 4) * 95,
+        })));
       } catch (err) {
         toast.error('Failed to load palace');
         navigate('/palaces');
@@ -105,6 +125,34 @@ export default function PalaceWalkthrough() {
     if (currentLocusIndex < loci.length - 1) nextLocus();
     else setShowResults(true);
   };
+
+  // ── Spatial map autosave (debounced 800ms) ────────────────
+  const saveLayout = useCallback(async (layout: SpatialEntry[]) => {
+    if (!id || !getToken) return;
+    try {
+      setIsSavingLayout(true);
+      const token = await getToken();
+      await fetch(`${API_BASE}/palaces/${id}/spatial-map`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ layout }),
+      });
+    } catch (err) {
+      console.error('[spatial-map.save]', err);
+    } finally {
+      setIsSavingLayout(false);
+    }
+  }, [id, getToken]);
+
+  const updateLocusPosition = useCallback((locusIndex: number, x: number, y: number) => {
+    setSpatialMap(prev => {
+      const next = prev.map(e => e.locusIndex === locusIndex ? { ...e, x, y } : e);
+      // Debounced autosave
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => saveLayout(next), 800);
+      return next;
+    });
+  }, [saveLayout]);
 
   if (loading) {
     return (
@@ -220,38 +268,60 @@ export default function PalaceWalkthrough() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Feature 4 Stub: Spatial Map View */}
+      {/* M1.1: Real Spatial Map — drag-to-arrange with autosave */}
       {viewMode === 'spatial' && (
         <Card className="mt-4 bg-slate-800/30 border-slate-700/30">
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm font-medium text-slate-300">🗺️ Spatial Memory Palace</p>
-              <Badge variant="secondary">Beta — Drag-to-arrange next week</Badge>
+              <div className="flex items-center gap-2">
+                {isSavingLayout && <span className="text-xs text-slate-500">Saving...</span>}
+                <Badge variant="secondary">Drag to arrange</Badge>
+              </div>
             </div>
-            <div className="aspect-[4/3] rounded-xl bg-slate-900/50 border border-slate-700/30 relative overflow-hidden">
-              {/* Floor plan grid */}
+            <div
+              className="aspect-[4/3] rounded-xl bg-slate-900/50 border border-slate-700/30 relative overflow-hidden"
+              onMouseDown={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const dragging = spatialMap.find(entry => {
+                  const ex = (entry.x / 400) * rect.width;
+                  const ey = (entry.y / 300) * rect.height;
+                  return Math.abs(e.clientX - rect.left - ex) < 30 && Math.abs(e.clientY - rect.top - ey) < 30;
+                });
+                if (!dragging) return;
+                const onMove = (me: MouseEvent) => {
+                  const nx = ((me.clientX - rect.left) / rect.width) * 400;
+                  const ny = ((me.clientY - rect.top) / rect.height) * 300;
+                  updateLocusPosition(dragging.locusIndex, Math.max(0, Math.min(380, nx)), Math.max(0, Math.min(280, ny)));
+                };
+                const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+              }}
+            >
+              {/* Grid */}
               <svg viewBox="0 0 400 300" className="w-full h-full">
-                {/* Rooms */}
-                {['#1F2937','#111827','#1F2937','#111827','#1F2937','#111827'].map((fill, i) => (
-                  <rect key={i} x={10+(i%3)*130} y={10+Math.floor(i/3)*140} width={120} height={130} rx={6} fill={fill} stroke="#374151" strokeWidth="1" />
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <line key={`h${i}`} x1={0} y1={i * 30} x2={400} y2={i * 30} stroke="#1F2937" strokeWidth="1" />
                 ))}
-                {/* Path */}
-                <path d="M70,75 L190,75 L190,215 L320,215" fill="none" stroke="#4F46E5" strokeWidth="2" strokeDasharray="6 3" opacity="0.5" />
-                {/* Pins */}
-                {loci.slice(0, 6).map((l, i) => (
-                  <g key={i}>
-                    <circle cx={70+(i%2)*250+(i>1?130:0)} cy={40+Math.floor(i/3)*140+(i>1?100:0)} r={12} fill="#4F46E5" opacity="0.8" />
-                    <text x={70+(i%2)*250+(i>1?130:0)} y={44+Math.floor(i/3)*140+(i>1?100:0)} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">{i+1}</text>
-                    <text x={70+(i%2)*250+(i>1?130:0)} y={62+Math.floor(i/3)*140+(i>1?100:0)} textAnchor="middle" fill="#94A3B8" fontSize="7">{l.concept?.slice(0,12)}</text>
-                  </g>
+                {Array.from({ length: 14 }).map((_, i) => (
+                  <line key={`v${i}`} x1={i * 30} y1={0} x2={i * 30} y2={300} stroke="#1F2937" strokeWidth="1" />
                 ))}
+                {/* Loci pins */}
+                {spatialMap.map((entry) => {
+                  const locus = loci[entry.locusIndex];
+                  if (!locus) return null;
+                  return (
+                    <g key={entry.locusIndex}>
+                      <circle cx={entry.x} cy={entry.y} r={14} fill={entry.locusIndex === currentLocusIndex ? '#4F46E5' : '#6366F1'} opacity="0.9" stroke="#fff" strokeWidth="1.5" className="cursor-pointer" />
+                      <text x={entry.x} y={entry.y + 4} textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">{entry.locusIndex + 1}</text>
+                      <text x={entry.x} y={entry.y + 24} textAnchor="middle" fill="#94A3B8" fontSize="7">{locus.concept?.slice(0, 14)}</text>
+                    </g>
+                  );
+                })}
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
-                <div className="text-center">
-                  <p className="text-sm text-white font-medium mb-1">🗺️ Drag-to-arrange</p>
-                  <p className="text-xs text-slate-400">Coming next week — drag loci to custom positions</p>
-                  <button className="mt-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs">Notify me</button>
-                </div>
+              <div className="absolute bottom-2 right-2 text-[10px] text-slate-600">
+                Click &amp; drag loci to arrange • Autosaves
               </div>
             </div>
           </CardContent>

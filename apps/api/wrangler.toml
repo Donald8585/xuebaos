@@ -21,6 +21,10 @@ database_id = "833d098b-f5c8-4744-974f-d723ce73f228"
 binding = "ASSETS"
 bucket_name = "xuebaos-assets"
 
+[[env.production.r2_buckets]]
+binding = "IMAGES"
+bucket_name = "xuebaos-images"
+
 [[env.production.kv_namespaces]]
 binding = "KV"
 id = "105dde0b82f84d1e83fb469026a2fc71"
@@ -32,3 +36,6 @@ binding = "AI_QUEUE"
 [env.production.vars]
 ENVIRONMENT = "production"
 CORS_ORIGIN = "https://xuebaos.com"
+
+[env.production.ai]
+binding = "AI"

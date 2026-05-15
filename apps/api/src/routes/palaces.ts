@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { TABLES } from "../db/schema";
 import type { Env } from "../index";
 import { authMiddleware } from "../middleware/auth";
 import { checkLimit } from "../middleware/tier-gate";
@@ -224,6 +225,8 @@ palaces.get("/", authMiddleware, zValidator("query", paginationSchema), async (c
     is_published: !!p.isPublic,
     isPublic: !!p.isPublic,
     tags: Array.isArray(p.tags) ? p.tags : [],
+    spatialMap: p.spatialMap || [],
+    lociSymbols: p.lociSymbols || {},
     extras: p.extras || {},
     created_at: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
     updated_at: p.updatedAt ? new Date(p.updatedAt).toISOString() : new Date().toISOString(),
@@ -298,6 +301,8 @@ palaces.get("/:id", authMiddleware, async (c) => {
     subject: palace.subject || '',
     lociCount: palace.lociCount || 0,
     loci: palace.loci || [],
+    spatialMap: palace.spatialMap || [],
+    lociSymbols: palace.lociSymbols || {},
     extras: palace.extras || {},
     isPublic: !!palace.isPublic,
     tags: Array.isArray(palace.tags) ? palace.tags : [],
@@ -524,6 +529,55 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
       slug,
       status: "created",
     }, 201);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// PUT /api/palaces/:id/spatial-map — M1.1 Drag-to-arrange persistence
+// ════════════════════════════════════════════════════════════════
+const spatialMapSchema = z.object({
+  layout: z.array(z.object({
+    locusIndex: z.number().int().min(0),
+    x: z.number(),
+    y: z.number(),
+    z: z.number().optional(),
+    roomId: z.string().optional(),
+    rotation: z.number().optional(),
+  })),
+});
+
+palaces.put("/:id/spatial-map", authMiddleware, zValidator("json", spatialMapSchema), async (c) => {
+  const requestId = crypto.randomUUID();
+  const internalUserId = c.get("internalUserId");
+  const palaceId = c.req.param("id");
+  const { layout } = c.req.valid("json");
+  const db = c.get("db");
+
+  console.log("[stage.spatial-map]", JSON.stringify({ requestId, palaceId, entryCount: layout.length }));
+
+  try {
+    const existing = await db.query.memoryPalaces.findFirst({
+      where: (p: any, { eq }: any) => eq(p.id, palaceId),
+    });
+
+    if (!existing) return c.json({ error: "save_failed", reason: "not_found", stage: "handler", requestId }, 404);
+    if (existing.userId !== internalUserId) return c.json({ error: "save_failed", reason: "forbidden", stage: "handler", requestId }, 403);
+
+    await db.update(TABLES.memoryPalaces)
+      .set({ spatialMap: layout, updatedAt: new Date() } as any)
+      .where(eq(TABLES.memoryPalaces.id, palaceId));
+
+    return c.json({ status: "ok", entryCount: layout.length, requestId }, 200);
+  } catch (e: any) {
+    const reason = classifyDbError(e);
+    logFailure("spatial-map", internalUserId, 0, e, requestId);
+    return c.json({
+      error: "save_failed",
+      reason,
+      stage: "handler",
+      detail: String(e?.message ?? "").slice(0, 200),
+      requestId,
+    }, 500);
   }
 });
 

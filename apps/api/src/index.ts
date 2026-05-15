@@ -32,8 +32,10 @@ import { createStorageService } from "./services/storage";
 export interface Env {
   DB: D1Database;
   STORAGE: R2Bucket;
+  IMAGES: R2Bucket;
   CACHE: KVNamespace;
   AI_QUEUE: Queue;
+  AI: any; // Workers AI binding
   CLERK_SECRET_KEY: string;
   CLERK_WEBHOOK_SECRET: string;
   CLERK_JWKS_URL?: string;
@@ -130,6 +132,7 @@ app.get("/api/health", async (c) => {
     app: c.env.APP_NAME || "XueBaOS",
     environment: c.env.ENVIRONMENT || "unknown",
     version: WORKER_VERSION,
+    builtAt: new Date().toISOString(),
     timestamp: new Date().toISOString(),
   });
 });
