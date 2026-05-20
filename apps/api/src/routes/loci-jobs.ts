@@ -356,7 +356,7 @@ lociJobs.post("/estimate-cost", authMiddleware, async (c) => {
     }
 
     const { checkCostCap } = await import("../services/cost");
-    const tier = c.get("subscriptionTier") || "free";
+    const tier = c.get("userTier") || "free";
     const result = checkCostCap(text, tier);
 
     const chunks = Math.ceil(result.estimatedTokens / 2000);

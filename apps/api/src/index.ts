@@ -487,9 +487,11 @@ async function handleLociChunkJob(
       where: (j: any, { eq: any }: any) => eq(j.id, jobId),
     });
     const spentSoFar = (jobState?.costHkd as number) ?? 0;
-    // Use default free tier for now — tier stored in clerk metadata
-    // TODO: fetch user tier from users table when creating job
-    const userTier = "free";
+    // Look up user tier from D1
+    const userRecord = await db.query.users.findFirst({
+      where: (u: any, { eq: any }: any) => eq(u.id, jobState?.userId),
+    });
+    const userTier = (userRecord?.subscriptionTier as string) || "free";
     const tierResult = trackJobCost(spentSoFar, chunk.tokenCount ?? estimateTokens(chunk.text), userTier);
 
     if (!tierResult.allowed) {

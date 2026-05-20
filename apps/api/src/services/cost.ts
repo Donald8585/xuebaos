@@ -20,10 +20,11 @@ const PRICING: Record<string, { inputPer1K: number; outputPer1K: number }> = {
 
 // ── Tier caps (HKD per job) ──────────────────────────────────────
 const TIER_CAPS: Record<string, number> = {
-  free: 5.0,       // ~1,300 tokens = ~5KB text (small essay)
-  xueba: 20.0,     // ~5,200 tokens = ~20KB (chapter)
-  pro: 50.0,       // ~13,000 tokens = ~52KB (paper)
-  founder: 200.0,   // ~52,000 tokens = ~208KB (thesis chapter)
+  free: 5.0,          // ~1,300 tokens = ~5KB text (small essay)
+  xueba: 20.0,        // ~5,200 tokens = ~20KB (chapter)
+  pro: 50.0,          // ~13,000 tokens = ~52KB (paper)
+  founder: 200.0,      // ~52,000 tokens = ~208KB (thesis chapter)
+  xueshen: 999999,    // Unlimited — effectively no cap
 };
 
 /** Token estimator: ~4 chars per token for mixed text */
