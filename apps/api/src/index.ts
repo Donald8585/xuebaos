@@ -57,6 +57,8 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET: string;
   DEEPSEEK_API_KEY: string;
   REPLICATE_API_TOKEN: string;
+  DUST3R_MODEL?: string;         // Replicate model path for DUSt3R (default: not set → fallback to vision)
+  FLOOR_PLAN_STRATEGY?: string;  // "auto" | "dust3r_replicate" | "gpt4o_vision"
   OPENAI_API_KEY: string;
   LLM_PRIMARY_MODEL?: string;    // defaults to "deepseek-chat"
   LLM_FALLBACK_MODEL?: string;   // defaults to "gpt-4o-mini"
