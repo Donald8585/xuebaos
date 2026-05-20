@@ -92,6 +92,7 @@ export interface StudyStats {
   total_sessions: number;
   total_duration_seconds: number;
   total_cards_reviewed: number;
+  cards_due_today: number;
   average_accuracy: number;
   streak_days: number;
   longest_streak: number;

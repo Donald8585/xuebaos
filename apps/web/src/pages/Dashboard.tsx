@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   Brain,
   Medal,
+  Monitor,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { usePalaces, useStories, useStudyStats, useTimetable } from '@/hooks/useApi';
@@ -29,6 +30,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton, SkeletonCard } from '@/components/ui/skeleton';
 import { formatDuration, formatRelativeDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { PalaceWidget } from '@/components/os/PalaceWidget';
 import {
   LineChart,
   Line,
@@ -515,6 +517,19 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Memory Palace Widget */}
+          <PalaceWidget
+            palaceCount={palaces?.length || 0}
+            anchorCount={stats?.total_cards_reviewed || 0}
+            dueToday={stats?.cards_due_today || 0}
+            mostReviewedPalace={palaces?.[0] ? {
+              name: palaces[0].title,
+              lociCount: palaces[0].loci_count || palaces[0].lociCount || 0,
+            } : undefined}
+            loading={palacesLoading || statsLoading}
+            onLaunch={() => navigate('/desktop')}
+          />
 
           {/* Saturation Level */}
           <Card>

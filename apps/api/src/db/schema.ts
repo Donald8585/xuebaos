@@ -481,6 +481,68 @@ export const methods = sqliteTable("methods", {
     .default(sql`(unixepoch())`),
 });
 
+// ── Video-Backed Palace Videos ───────────────────────────────────
+export const palaceVideos = sqliteTable("palace_videos", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  palaceId: text("palace_id").references(() => memoryPalaces.id),
+  title: text("title").notNull(),
+  fileName: text("file_name"),
+  fileSize: integer("file_size"),
+  durationSeconds: real("duration_seconds"),
+  r2Key: text("r2_key").notNull(),
+  thumbnailKey: text("thumbnail_key"),
+  status: text("status").default("uploading"), // uploading, processing, ready, failed
+  sceneCount: integer("scene_count").default(0),
+  scenes: text("scenes", { mode: "json" }).$type<VideoScene[]>().default([]),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export interface VideoScene {
+  timestampSeconds: number;
+  thumbnailKey?: string;
+  label: string;
+}
+
+// ── SRS-Anchored Loci ────────────────────────────────────────────
+export const palaceAnchors = sqliteTable("palace_anchors", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  palaceId: text("palace_id")
+    .notNull()
+    .references(() => memoryPalaces.id),
+  locusIndex: integer("locus_index").notNull(),
+  concept: text("concept").notNull(),
+  sourceVideoId: text("source_video_id").references(() => palaceVideos.id),
+  sourceTimestamp: real("source_timestamp"),
+  thumbnailKey: text("thumbnail_key"),
+  // FSRS fields
+  fsrsStability: real("fsrs_stability").default(0),
+  fsrsDifficulty: real("fsrs_difficulty").default(0.3),
+  fsrsState: integer("fsrs_state").default(0),
+  fsrsDue: integer("fsrs_due"),
+  fsrsElapsedDays: integer("fsrs_elapsed_days").default(0),
+  fsrsScheduledDays: integer("fsrs_scheduled_days").default(0),
+  fsrsReps: integer("fsrs_reps").default(0),
+  fsrsLapses: integer("fsrs_lapses").default(0),
+  fsrsLastReview: integer("fsrs_last_review"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ════════════════════════════════════════════════════════════════
 // Typed Table Registry — NEVER bracket-access db.schema
 // ════════════════════════════════════════════════════════════════
@@ -505,6 +567,8 @@ export const TABLES = {
   walkthroughs,
   chats,
   conceptChains,
+  palaceVideos,
+  palaceAnchors,
 } as const;
 
 export type TableName = keyof typeof TABLES;

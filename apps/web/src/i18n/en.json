@@ -48,7 +48,8 @@
     "readingVault": "Reading Vault",
     "conceptChain": "Concept Chain",
     "technocratic": "Method Audit",
-    "abbreviations": "Abbreviations"
+    "abbreviations": "Abbreviations",
+    "desktop": "Desktop"
   },
   "landing": {
     "heroTitle": "Become a",
@@ -709,5 +710,20 @@
     "notFound": "Page not found",
     "unauthorized": "Please sign in to continue",
     "networkError": "Network error. Check your connection."
+  },
+  "video": {
+    "upload": "Upload Video",
+    "select": "Select Video",
+    "extracting": "Extracting scenes...",
+    "scenesFound": "{{count}} scenes found",
+    "dropHere": "Drop MP4, WebM, MOV, or AVI here",
+    "maxSize": "Maximum 200MB",
+    "unsupported": "Unsupported video format"
+  },
+  "desktop": {
+    "title": "XueBaOS Desktop",
+    "launchApp": "Launch App",
+    "changeTheme": "Change Theme",
+    "openWindows": "{{count}} windows open"
   }
 }

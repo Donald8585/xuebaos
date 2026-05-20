@@ -1,0 +1,59 @@
+/* ═══════════════════════════════════════════════════════════════
+   XueBaOS Theme Tokens — consumed by all OS apps
+   ═══════════════════════════════════════════════════════════════ */
+
+:root,
+.theme-light {
+  --xb-bg: #ffffff;
+  --xb-fg: #0f172a;
+  --xb-surface: #f1f5f9;
+  --xb-border: #e2e8f0;
+  --xb-accent: #4F46E5;
+  --xb-accent-hover: #4338CA;
+  --xb-success: #10B981;
+  --xb-warning: #F59E0B;
+  --xb-error: #F43F5E;
+  --xb-radius: 0.75rem;
+  --xb-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --xb-font: 'Inter', sans-serif;
+  --xb-mono: 'JetBrains Mono', monospace;
+  /* derived tokens */
+  --xb-surface-hover: #e2e8f0;
+  --xb-text-secondary: #64748b;
+}
+
+.theme-dark {
+  --xb-bg: #020617;
+  --xb-fg: #f8fafc;
+  --xb-surface: #0f172a;
+  --xb-border: #1e293b;
+  --xb-accent: #4F46E5;
+  --xb-accent-hover: #6366f1;
+  --xb-success: #10B981;
+  --xb-warning: #F59E0B;
+  --xb-error: #F43F5E;
+  --xb-radius: 0.75rem;
+  --xb-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --xb-font: 'Inter', sans-serif;
+  --xb-mono: 'JetBrains Mono', monospace;
+  --xb-surface-hover: #1e293b;
+  --xb-text-secondary: #64748b;
+}
+
+.theme-sepia {
+  --xb-bg: #faf4e8;
+  --xb-fg: #3d2b1f;
+  --xb-surface: #f0e6d3;
+  --xb-border: #d4c3a3;
+  --xb-accent: #8B4513;
+  --xb-accent-hover: #A0522D;
+  --xb-success: #2d6a4f;
+  --xb-warning: #b8860b;
+  --xb-error: #c0392b;
+  --xb-radius: 0.75rem;
+  --xb-shadow: 0 4px 24px rgba(61, 43, 31, 0.1);
+  --xb-font: 'Inter', sans-serif;
+  --xb-mono: 'JetBrains Mono', monospace;
+  --xb-surface-hover: #e8dcc8;
+  --xb-text-secondary: #8b7355;
+}

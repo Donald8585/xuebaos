@@ -17,6 +17,7 @@ import {
   MessageCircle,
   BookMarked,
   Link2,
+  Monitor,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/stores/appStore';
@@ -35,6 +36,10 @@ const navItems = [
   { icon: BookMarked, label: 'codex', path: '/codex' },
   { icon: Link2, label: 'abbreviations', path: '/abbreviations' },
   { icon: Settings, label: 'settings', path: '/settings' },
+];
+
+const bottomItems = [
+  { icon: Monitor, label: 'desktop', path: '/desktop' },
 ];
 
 export function Sidebar() {
@@ -105,6 +110,56 @@ export function Sidebar() {
                 <motion.div
                   layoutId="sidebar-pill"
                   className="ml-auto h-1.5 w-1.5 rounded-full bg-indigo-500"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Desktop mode link */}
+      <div className="px-3 py-2">
+        {bottomItems.map((item) => {
+          const isActive = location.pathname === item.path;
+          const Icon = item.icon;
+          const label = t(`nav.${item.label}`);
+          if (sidebarCollapsed) {
+            return (
+              <Tooltip key={item.path} delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => navigate(item.path)}
+                    className={cn(
+                      'flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200 mx-auto',
+                      isActive
+                        ? 'bg-emerald-600/20 text-emerald-400 shadow-lg shadow-emerald-500/10'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    )}
+                  >
+                    <Icon size={20} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{label}</TooltipContent>
+              </Tooltip>
+            );
+          }
+          return (
+            <button
+              key={item.path}
+              onClick={() => navigate(item.path)}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group',
+                isActive
+                  ? 'bg-emerald-600/20 text-emerald-400 shadow-lg shadow-emerald-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              )}
+            >
+              <Icon size={20} />
+              <span className="text-sm font-medium">{label}</span>
+              {isActive && (
+                <motion.div
+                  layoutId="sidebar-pill-desktop"
+                  className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-500"
                 />
               )}
             </button>

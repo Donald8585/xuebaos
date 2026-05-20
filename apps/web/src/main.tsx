@@ -8,6 +8,7 @@ import App from './App';
 import { setClerkTokenGetter } from './lib/api';
 import './i18n';
 import './styles/globals.css';
+import './styles/os-theme.css';
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 

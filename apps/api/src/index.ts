@@ -32,6 +32,8 @@ import uploadRoutes from "./routes/uploads";
 import technocraticRoutes from "./routes/technocratic";
 import statsRoutes from "./routes/stats";
 import clerkWebhookRoutes from "./routes/clerk-webhook";
+import videoRoutes from "./routes/videos";
+import anchorRoutes from "./routes/anchors";
 
 // ── Services ────────────────────────────────────────────────────
 import { createStorageService } from "./services/storage";
@@ -196,6 +198,8 @@ app.route("/debug", uploadRoutes); // /debug/cors
 app.route("/api/technocratic", technocraticRoutes);
 app.route("/api/stats", statsRoutes);
 app.route("/api/clerk", clerkWebhookRoutes);
+app.route("/api/videos", videoRoutes);
+app.route("/api/anchors", anchorRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // Storage Routes (proxied R2)

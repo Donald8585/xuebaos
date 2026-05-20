@@ -48,7 +48,8 @@
     "readingVault": "閱讀庫",
     "conceptChain": "概念鏈",
     "technocratic": "方法審計",
-    "abbreviations": "縮寫工具"
+    "abbreviations": "縮寫工具",
+    "desktop": "桌面"
   },
   "landing": {
     "heroTitle": "成為",
@@ -709,5 +710,20 @@
     "notFound": "找不到頁面",
     "unauthorized": "請登入以繼續",
     "networkError": "網絡錯誤。請檢查你的連接。"
+  },
+  "video": {
+    "upload": "上傳影片",
+    "select": "選擇影片",
+    "extracting": "正在提取場景...",
+    "scenesFound": "找到 {{count}} 個場景",
+    "dropHere": "拖放 MP4、WebM、MOV 或 AVI 檔案",
+    "maxSize": "最大 200MB",
+    "unsupported": "不支援的影片格式"
+  },
+  "desktop": {
+    "title": "XueBaOS 桌面",
+    "launchApp": "啟動應用程式",
+    "changeTheme": "切換主題",
+    "openWindows": "{{count}} 個視窗已開啟"
   }
 }
