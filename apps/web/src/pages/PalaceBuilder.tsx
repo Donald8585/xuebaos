@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@clerk/clerk-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Home, School, Castle, Gamepad2, PenTool,
+  Home, School, Castle, Gamepad2, PenTool, ScanLine,
   ArrowLeft, ArrowRight, Wand2, Check, Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ const templates = [
   { id: 'dreamMansion', icon: Castle, color: 'from-violet-500 to-purple-600' },
   { id: 'gameMap', icon: Gamepad2, color: 'from-rose-500 to-pink-600' },
   { id: 'custom', icon: PenTool, color: 'from-amber-500 to-orange-600' },
+  { id: 'realHome', icon: ScanLine, color: 'from-emerald-500 to-teal-600' },
 ];
 
 const TOTAL_STEPS = 4;
@@ -349,15 +350,23 @@ export default function PalaceBuilder() {
                   {templates.map((tpl) => {
                     const Icon = tpl.icon;
                     const isSelected = template === tpl.id;
+                    const handleClick = () => {
+                      if (tpl.id === 'realHome') {
+                        navigate('/palaces/3d');
+                        return;
+                      }
+                      setTemplate(tpl.id);
+                    };
                     return (
                       <button
                         key={tpl.id}
-                        onClick={() => setTemplate(tpl.id)}
+                        onClick={handleClick}
                         className={cn(
                           'flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all duration-200',
                           isSelected
                             ? 'border-indigo-500 bg-indigo-500/10 shadow-lg shadow-indigo-500/10'
-                            : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-600'
+                            : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-600',
+                          tpl.id === 'realHome' && 'border-emerald-500/60 bg-emerald-500/5 ring-1 ring-emerald-500/20'
                         )}
                       >
                         <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center', tpl.color)}>
