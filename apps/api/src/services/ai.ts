@@ -319,8 +319,8 @@ export async function generatePalace(
   // If concepts look like raw text (>200 chars total), send as full text extraction
   const isRawText = concepts.length <= 5 && concepts.some(c => c.length > 40);
   
-  // Limit total prompt to 30KB — prevents timeout on large uploads
-  const MAX_PROMPT = 30000;
+  // Limit total prompt to 80KB — DeepSeek Chat has 128K context, leaves room for prompt template + response
+  const MAX_PROMPT = 80000;
   const rawText = concepts.join("\n").slice(0, MAX_PROMPT);
 
   const prompt = isRawText

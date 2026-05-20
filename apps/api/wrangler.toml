@@ -37,6 +37,11 @@ id = "105dde0b82f84d1e83fb469026a2fc71"
 queue = "xuebaos-ai-jobs"
 binding = "AI_QUEUE"
 
+[[env.production.queues.consumers]]
+queue = "xuebaos-ai-jobs"
+max_batch_size = 10
+max_batch_timeout = 5
+
 [env.production.vars]
 ENVIRONMENT = "production"
 CORS_ORIGIN = "https://xuebaos.com"

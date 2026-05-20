@@ -93,8 +93,8 @@ ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSch
     const body = c.req.valid("json");
     const totalChars = body.concepts.reduce((sum, c) => sum + c.length, 0);
 
-    // Large payloads (>30KB) or explicit async → via queue
-    if (body.asyncMode || contentLength > 30000 || totalChars > 30000) {
+    // Large payloads (>100KB) or explicit async → via queue
+    if (body.asyncMode || contentLength > 100000 || totalChars > 100000) {
       const jobId = crypto.randomUUID();
       await c.env.AI_QUEUE.send({
         type: "generate-palace",
