@@ -62,9 +62,7 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
       updatedAt: new Date(),
     } as any);
 
-    // ── Extract floor plan using only key forced frames ───────────
-    // Full 13-16 frame payloads can timeout CF Worker waitUntil.
-    // Use only 5 forced-position frames (0/25/50/75/100%) for speed.
+    // ── Select 5 key frames for analysis ──────────────────────────
     const forcedFrames = validFrames.filter((_: string, i: number) =>
       i === 0 || i === Math.floor(validFrames.length / 4) ||
       i === Math.floor(validFrames.length / 2) ||
@@ -72,59 +70,55 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
       i === validFrames.length - 1
     );
     const framesToAnalyze = forcedFrames.length >= 3 ? forcedFrames : validFrames.slice(0, 5);
-    console.log(`[floor-plan] Using ${framesToAnalyze.length}/${validFrames.length} key frames`);
 
-    c.executionCtx.waitUntil((async () => {
-      try {
-        const { extractFloorPlan } = await import("../services/floor-plan-extractor");
-        const schema = await extractFloorPlan(c.env, framesToAnalyze);
+    // ── Extract floor plan directly (5 frames, ~5-10s, fast enough for sync) ──
+    try {
+      const { extractFloorPlan } = await import("../services/floor-plan-extractor");
+      const schema = await extractFloorPlan(c.env, framesToAnalyze);
 
-        const roomCount = schema.rooms?.length || 0;
-        await db.update(db.schema.floorPlans)
-          .set({
-            status: "ready",
-            roomSchema: JSON.stringify(schema),
-            roomCount,
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(db.schema.floorPlans.id, jobId));
+      const roomCount = schema.rooms?.length || 0;
+      await db.update(db.schema.floorPlans)
+        .set({
+          status: "ready",
+          roomSchema: JSON.stringify(schema),
+          roomCount,
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(db.schema.floorPlans.id, jobId));
 
-        // If linked to a palace, update its spatial map
-        if (body.palaceId && roomCount > 0) {
-          const spatialMapNodes = schema.rooms.map((room, i) => ({
-            id: `room-${i}`,
-            name: room.name,
-            x: 0,  // Client positions rooms
-            y: 0,
-            width: Math.round(room.width_m * 100),
-            height: Math.round(room.height_m * 100),
-            connections: room.connections,
-            metadata: {
-              floor_type: room.floor_type,
-              notable_features: room.notable_features,
-              dimensions_m: { width: room.width_m, height: room.height_m },
-            },
-          }));
-
-          await db.update(db.schema.memoryPalaces)
-            .set({ spatialMap: spatialMapNodes, updatedAt: new Date() } as any)
-            .where(eq(db.schema.memoryPalaces.id, body.palaceId));
-        }
-
-        console.log(`[floor-plan] Job ${jobId}: ${roomCount} rooms detected`);
-      } catch (e: any) {
-        console.error(`[floor-plan.fail] Job ${jobId}:`, String(e?.message ?? "").slice(0, 300));
-        await db.update(db.schema.floorPlans)
-          .set({
-            status: "failed",
-            error: String(e?.message ?? "").slice(0, 500),
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(db.schema.floorPlans.id, jobId));
+      if (body.palaceId && roomCount > 0) {
+        const spatialMapNodes = schema.rooms.map((room, i) => ({
+          id: `room-${i}`,
+          name: room.name,
+          x: room.approx_position?.x ? Math.round(room.approx_position.x * 1500) : 0,
+          y: room.approx_position?.z ? Math.round(room.approx_position.z * 1000) : 0,
+          width: Math.round(room.width_m * 100),
+          height: Math.round(room.height_m * 100),
+          connections: room.connections,
+          metadata: { floor_type: room.floor_type, notable_features: room.notable_features },
+        }));
+        await db.update(db.schema.memoryPalaces)
+          .set({ spatialMap: spatialMapNodes, updatedAt: new Date() } as any)
+          .where(eq(db.schema.memoryPalaces.id, body.palaceId));
       }
-    })());
 
-    return c.json({ jobId, status: "extracting", requestId }, 202);
+      console.log(`[floor-plan] Job ${jobId}: ${roomCount} rooms`);
+      return c.json({ jobId, status: "ready", roomCount, rooms: schema.rooms, schema, requestId });
+
+    } catch (e: any) {
+      const errMsg = String(e?.message ?? "").slice(0, 500);
+      console.error(`[floor-plan.fail] Job ${jobId}:`, errMsg);
+      await db.update(db.schema.floorPlans)
+        .set({ status: "failed", error: errMsg, updatedAt: new Date() } as any)
+        .where(eq(db.schema.floorPlans.id, jobId));
+      return c.json({
+        error: "floor_plan_extraction_failed",
+        code: errMsg.includes("timeout") ? "API_TIMEOUT" : errMsg.includes("429") ? "RATE_LIMITED" : "EXTRACTION_FAILED",
+        detail: errMsg,
+        jobId,
+        requestId,
+      }, 502);
+    }
 
   } catch (e: any) {
     console.error("[floor-plan.create.fail]", JSON.stringify({

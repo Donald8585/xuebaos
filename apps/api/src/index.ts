@@ -405,6 +405,25 @@ export default {
       if (staleJobs.length > 0) {
         console.log(`[cron.cleanup] Removed ${staleJobs.length} stale loci jobs`);
       }
+
+      // Sweep stuck floor_plans: mark extracting/pending >10min as failed
+      const tenMinAgo = Math.floor((Date.now() - 10 * 60 * 1000) / 1000);
+      const stuckPlans = await db.select({ id: db.schema.floorPlans.id })
+        .from(db.schema.floorPlans)
+        .where(and(
+          sql`status IN ('extracting','pending','processing')`,
+          sql`created_at < ${tenMinAgo}`
+        ))
+        .all();
+
+      for (const plan of stuckPlans) {
+        await db.update(db.schema.floorPlans)
+          .set({ status: "failed", error: "PIPELINE_STUCK_TIMEOUT", updatedAt: new Date() } as any)
+          .where(eq(db.schema.floorPlans.id, plan.id));
+      }
+      if (stuckPlans.length > 0) {
+        console.log(`[cron.cleanup] Swept ${stuckPlans.length} stuck floor plans`);
+      }
     } catch (e: any) {
       console.error("[cron.cleanup.fail]", String(e?.message ?? "").slice(0, 200));
     }

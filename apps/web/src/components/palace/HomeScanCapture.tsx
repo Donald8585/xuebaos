@@ -93,96 +93,59 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
   const submitForExtraction = useCallback(async (capturedFrames: string[]) => {
     setStage('extracting');
     setError(null);
+    const startedAt = Date.now();
 
     try {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
 
-      // Submit frames
-      const resp = await fetch(`${API_BASE}/floor-plan-jobs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ frames: capturedFrames, palaceId }),
-      });
+      // Submit frames — server processes inline and returns result directly
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || 'Floor plan extraction failed');
-      }
+      try {
+        const resp = await fetch(`${API_BASE}/floor-plan-jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ frames: capturedFrames, palaceId }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
 
-      const { jobId } = await resp.json();
+        const data = await resp.json();
 
-      // SSE stream for progress
-      const streamResp = await fetch(`${API_BASE}/floor-plan-jobs/${jobId}/stream`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!streamResp.ok || !streamResp.body) {
-        // Fallback: poll
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          const pollResp = await fetch(`${API_BASE}/floor-plan-jobs/${jobId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (pollResp.ok) {
-            const data = await pollResp.json();
-            if (data.status === 'ready') {
-              const finalResult: FloorPlanResult = {
-                jobId,
-                rooms: data.schema?.rooms || [],
-                status: 'ready',
-              };
-              setResult(finalResult);
-              setStage('done');
-              onComplete(finalResult);
-              return;
-            }
-            if (data.status === 'failed') {
-              throw new Error(data.error || 'Floor plan extraction failed');
-            }
-          }
+        if (resp.ok && data.rooms) {
+          // Success — direct response with rooms
+          const finalResult: FloorPlanResult = {
+            jobId: data.jobId || '',
+            rooms: data.rooms || [],
+            status: 'ready',
+          };
+          setResult(finalResult);
+          setStage('done');
+          console.log(`[HomeScanCapture] Got ${finalResult.rooms.length} rooms in ${Date.now() - startedAt}ms`);
+          onComplete(finalResult);
+          return;
         }
-        throw new Error('Floor plan extraction timed out');
-      }
 
-      const reader = streamResp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+        // Error from server
+        const code = data.code || 'EXTRACTION_FAILED';
+        throw new Error(`[${code}] ${data.detail || data.error || 'Floor plan extraction failed'}`);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === 'complete') {
-              const finalResult: FloorPlanResult = {
-                jobId,
-                rooms: event.schema?.rooms || [],
-                status: 'ready',
-              };
-              setResult(finalResult);
-              setStage('done');
-              onComplete(finalResult);
-              return;
-            }
-            if (event.type === 'error') {
-              throw new Error(event.error || 'Floor plan extraction failed');
-            }
-          } catch (e: any) {
-            if (e.message?.includes('extraction failed')) throw e;
-          }
+      } catch (fetchErr: any) {
+        clearTimeout(timeout);
+        if (fetchErr.name === 'AbortError') {
+          throw new Error('API_TIMEOUT: Floor plan extraction timed out after 90s');
         }
+        throw fetchErr;
       }
+
     } catch (e: any) {
-      setError(e.message || 'Floor plan extraction failed');
+      const msg = e.message || 'Floor plan extraction failed';
+      setError(msg);
       setStage('idle');
-      toast.error(e.message || 'Floor plan extraction failed');
+      toast.error(msg);
+      console.error('[HomeScanCapture]', msg);
     }
   }, [getToken, API_BASE, palaceId, onComplete]);
 
