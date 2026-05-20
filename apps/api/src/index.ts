@@ -487,7 +487,10 @@ async function handleLociChunkJob(
       where: (j: any, { eq: any }: any) => eq(j.id, jobId),
     });
     const spentSoFar = (jobState?.costHkd as number) ?? 0;
-    const tierResult = trackJobCost(spentSoFar, chunk.tokenCount ?? estimateTokens(chunk.text), "free");
+    // Use default free tier for now — tier stored in clerk metadata
+    // TODO: fetch user tier from users table when creating job
+    const userTier = "free";
+    const tierResult = trackJobCost(spentSoFar, chunk.tokenCount ?? estimateTokens(chunk.text), userTier);
 
     if (!tierResult.allowed) {
       console.warn(`[loci-chunk] Cost cap exceeded for job ${jobId}: HK$${spentSoFar.toFixed(2)} / HK$${tierResult.cap}`);
