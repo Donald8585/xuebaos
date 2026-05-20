@@ -36,6 +36,7 @@ import clerkWebhookRoutes from "./routes/clerk-webhook";
 import videoRoutes from "./routes/videos";
 import anchorRoutes from "./routes/anchors";
 import lociJobsRoutes from "./routes/loci-jobs";
+import floorPlanJobsRoutes from "./routes/floor-plan-jobs";
 
 // ── Services ────────────────────────────────────────────────────
 import { createStorageService } from "./services/storage";
@@ -206,6 +207,7 @@ app.route("/api/clerk", clerkWebhookRoutes);
 app.route("/api/videos", videoRoutes);
 app.route("/api/anchors", anchorRoutes);
 app.route("/api/loci-jobs", lociJobsRoutes);
+app.route("/api/floor-plan-jobs", floorPlanJobsRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // Storage Routes (proxied R2)

@@ -590,6 +590,27 @@ export const lociChunks = sqliteTable("loci_chunks", {
     .default(sql`(unixepoch())`),
 });
 
+// ── Floor Plans (video walkthrough → room schema) ─────────────────
+export const floorPlans = sqliteTable("floor_plans", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  palaceId: text("palace_id").references(() => memoryPalaces.id),
+  sourceVideoId: text("source_video_id").references(() => palaceVideos.id),
+  sourceVideoKey: text("source_video_key"),
+  roomSchema: text("room_schema"),
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  roomCount: integer("room_count").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ════════════════════════════════════════════════════════════════
 // Typed Table Registry — NEVER bracket-access db.schema
 /** All Drizzle table definitions keyed by stable name.
@@ -617,6 +638,7 @@ export const TABLES = {
   palaceAnchors,
   lociJobs,
   lociChunks,
+  floorPlans,
 } as const;
 
 export type TableName = keyof typeof TABLES;
