@@ -85,3 +85,59 @@ export function trackJobCost(
     cap,
   };
 }
+
+// ══════════════════════════════════════════════════════════════════
+// Floor Plan Extraction — per-scan cost + per-tier monthly limits
+// ══════════════════════════════════════════════════════════════════
+
+/** Per-strategy cost per scan (HKD) */
+const FLOOR_PLAN_COSTS: Record<string, number> = {
+  dust3r_replicate: 0.40,  // ~$0.05 USD × 7.8
+  gpt4o_vision: 0.16,      // ~$0.02 USD × 7.8
+  default: 0.40,
+};
+
+/** Per-tier monthly scan limits */
+const FLOOR_PLAN_MONTHLY_LIMITS: Record<string, number> = {
+  free: 1,
+  xueba: 10,
+  pro: 50,
+  founder: 100,
+  xueshen: 999999,
+};
+
+/** Get cost for floor plan extraction by strategy */
+export function getFloorPlanCost(strategy?: string): number {
+  return FLOOR_PLAN_COSTS[strategy ?? "default"] ?? FLOOR_PLAN_COSTS.default;
+}
+
+/** Get monthly scan limit for tier */
+export function getFloorPlanMonthlyLimit(tier?: string): number {
+  return FLOOR_PLAN_MONTHLY_LIMITS[tier ?? "free"] ?? FLOOR_PLAN_MONTHLY_LIMITS.free;
+}
+
+/** Check if user has remaining floor plan scans this month */
+export async function checkFloorPlanQuota(
+  db: any,
+  userId: string,
+  tier?: string
+): Promise<{ allowed: boolean; usedThisMonth: number; limit: number; costHkd: number }> {
+  const limit = getFloorPlanMonthlyLimit(tier);
+  if (limit >= 999999) return { allowed: true, usedThisMonth: 0, limit, costHkd: 0 };
+
+  const { eq, and, sql } = await import("drizzle-orm");
+  const thisMonthUnix = Math.floor(new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime() / 1000);
+
+  const rows = await db.select({ count: sql`count(*)` })
+    .from(db.schema.floorPlans)
+    .where(and(
+      eq(db.schema.floorPlans.userId, userId),
+      sql`created_at >= ${thisMonthUnix}`
+    ))
+    .all();
+
+  const usedThisMonth = Number(rows?.[0]?.count ?? 0);
+  const costHkd = getFloorPlanCost();
+
+  return { allowed: usedThisMonth < limit, usedThisMonth, limit, costHkd };
+}

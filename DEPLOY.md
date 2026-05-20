@@ -99,3 +99,30 @@ cd apps/api && wrangler d1 execute xuebaos-db --remote --file=./drizzle/migratio
 - `REPLICATE_API_TOKEN`
 - `ELEVENLABS_API_KEY`
 - `RESEND_API_KEY`
+
+## Floor Plan Pipeline (Phase 1)
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/floor-plan-jobs` | POST | Submit frames → extract room schema |
+| `/api/floor-plan-jobs/:id` | GET | Job status + room schema |
+| `/api/floor-plan-jobs/:id/stream` | GET | SSE progress stream |
+
+### Cost Caps (floor plans)
+
+| Tier | Scans/month | Per-scan cost |
+|------|-----------|---------------|
+| free | 1 | ~HK$0.16 |
+| xueba | 10 | ~HK$0.16 |
+| pro | 50 | ~HK$0.16 |
+| founder | 100 | ~HK$0.16 |
+| xueshen | unlimited | ~HK$0.16 |
+
+### Env Vars
+
+- `DUST3R_MODEL` — Replicate model path for DUSt3R (default: not set → auto-fallback to GPT-4o vision)
+- `FLOOR_PLAN_STRATEGY` — "auto" | "dust3r_replicate" | "gpt4o_vision" (default: auto)
+- `OPENAI_API_KEY` — Required for GPT-4o-mini vision
+- `REPLICATE_API_TOKEN` — Required for DUSt3R strategy

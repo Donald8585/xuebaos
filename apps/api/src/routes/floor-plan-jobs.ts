@@ -26,6 +26,21 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
   const body = c.req.valid("json");
 
   try {
+    // ── Quota check ──────────────────────────────────────────────
+    const { checkFloorPlanQuota } = await import("../services/cost");
+    const tier = c.get("userTier") || "free";
+    const quota = await checkFloorPlanQuota(db, internalUserId, tier);
+    if (!quota.allowed) {
+      return c.json({
+        error: "quota_exceeded",
+        code: "FLOOR_PLAN_QUOTA_EXCEEDED",
+        detail: `Monthly limit reached: ${quota.usedThisMonth}/${quota.limit} scans. Upgrade your plan to scan more homes.`,
+        usedThisMonth: quota.usedThisMonth,
+        limit: quota.limit,
+        requestId,
+      }, 429);
+    }
+
     // ── Validate frames ───────────────────────────────────────────
     const validFrames = body.frames.filter(f =>
       f.startsWith("data:image/") && f.length < 5 * 1024 * 1024
