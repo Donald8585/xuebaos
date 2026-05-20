@@ -42,6 +42,10 @@ cd apps/api && wrangler deploy --env production
 cd apps/web && npm run build && wrangler pages deploy dist --project-name xuebaos
 ```
 
+## Queue Consumer
+
+The queue consumer for `xuebaos-ai-jobs` is configured manually in the Cloudflare dashboard (not in wrangler.toml) to avoid duplicate consumer errors. If the queue consumer stops working, check the Cloudflare Dashboard → Workers & Pages → xuebaos-api → Triggers → Queues.
+
 ## Secrets (set via `wrangler secret put`)
 
 - `CLERK_SECRET_KEY`
