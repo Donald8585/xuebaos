@@ -231,7 +231,8 @@ async function extractWithGPT4oVision(
     image_url: { url: f, detail: "low" as const },
   }));
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+  const openaiBase = (env as any).OPENAI_BASE_URL || "https://api.openai.com";
+  const resp = await fetch(`${openaiBase}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

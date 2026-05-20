@@ -36,9 +36,10 @@ function getProviders(env: Env): ProviderConfig[] {
   }
 
   if (env.OPENAI_API_KEY) {
+    const openaiBase = (env as any).OPENAI_BASE_URL || OPENAI_BASE;
     providers.push({
       name: "openai",
-      baseUrl: OPENAI_BASE,
+      baseUrl: openaiBase,
       apiKey: env.OPENAI_API_KEY,
       model: env.LLM_FALLBACK_MODEL || "gpt-4o-mini",
     });
