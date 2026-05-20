@@ -153,6 +153,27 @@ lociJobs.post("/", authMiddleware, async (c) => {
       }
     }
 
+    // ── Process first chunk inline for immediate feedback ──────────
+    // Queue consumer may be slow; this guarantees the first result
+    if (chunks.length > 0) {
+      c.executionCtx.waitUntil((async () => {
+        try {
+          const { generateLociForChunk } = await import("../services/ai");
+          const firstChunk = chunks[0];
+          const loci = await generateLociForChunk(c.env, firstChunk.text, topic, firstChunk.sectionTitle);
+          await db.update(db.schema.lociChunks)
+            .set({ status: "done", loci: JSON.stringify(loci), updatedAt: new Date() } as any)
+            .where(eq(db.schema.lociChunks.id, firstChunk.chunkId));
+          await db.update(db.schema.lociJobs)
+            .set({ completedChunks: sql`completed_chunks + 1`, updatedAt: new Date() } as any)
+            .where(eq(db.schema.lociJobs.id, jobId));
+          console.log(`[loci-jobs] First chunk ${firstChunk.chunkId} processed inline`);
+        } catch (e) {
+          console.error("[loci-jobs.inline-chunk]", (e as any)?.message);
+        }
+      })());
+    }
+
     console.log(`[loci-jobs] Job ${jobId}: ${chunks.length} chunks enqueued (${plaintext.length} chars, ~${estimatedTokens} tokens)`);
 
     return c.json({
