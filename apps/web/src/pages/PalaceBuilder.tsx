@@ -48,6 +48,10 @@ export default function PalaceBuilder() {
   const [isSaving, setIsSaving] = useState(false);
   const [loci, setLoci] = useState<Locus[]>([]);
   const [lociProgress, setLociProgress] = useState({ total: 0, completed: 0 });
+  const [failedChunks, setFailedChunks] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [costEstimate, setCostEstimate] = useState<{ tokens: number; cost: number; chunks: number } | null>(null);
+  const [showCostGate, setShowCostGate] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>('paste');
   const [uploadedFileName, setUploadedFileName] = useState('');
   const { getToken } = useAuth();
@@ -65,11 +69,27 @@ export default function PalaceBuilder() {
     setIsGenerating(true);
     setLoci([]);
     setLociProgress({ total: 0, completed: 0 });
+    setFailedChunks(0);
     const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
     try {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
+
+      // ── Cost estimate (background, non-blocking) ────────────────
+      fetch(`${API_BASE}/loci-jobs/estimate-cost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: content }),
+      }).then(r => r.json()).then(data => {
+        if (data.estimatedTokens) {
+          setCostEstimate({ tokens: data.estimatedTokens, cost: data.estimatedCost, chunks: data.estimatedChunks });
+          if (data.warning) {
+            setShowCostGate(true);
+            toast(data.warning, { icon: '💰', duration: 6000 });
+          }
+        }
+      }).catch(() => {});
 
       // ── Submit job to chunked pipeline ──────────────────────────
       const resp = await fetch(`${API_BASE}/loci-jobs?topic=${encodeURIComponent(subject || 'Study Material')}`, {
@@ -84,64 +104,14 @@ export default function PalaceBuilder() {
       }
 
       const { jobId, totalChunks } = await resp.json();
+      setActiveJobId(jobId);
       setLociProgress({ total: totalChunks, completed: 0 });
 
       if (totalChunks === 0) throw new Error('No content to process');
 
       // ── SSE stream for progressive results ─────────────────────
-      const streamResp = await fetch(`${API_BASE}/loci-jobs/${jobId}/stream`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      streamResults(API_BASE, jobId, token, 0);
 
-      if (!streamResp.ok || !streamResp.body) {
-        // Fall back to polling
-        const result = await pollJob(API_BASE, jobId, token);
-        finishGeneration(result);
-        return;
-      }
-
-      const reader = streamResp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === 'progress') {
-              setLociProgress({ total: event.totalChunks, completed: event.completedChunks });
-              if (event.allLoci?.length) {
-                setLoci(event.allLoci.map((l: any) => ({
-                  concept: l.name || l.concept || '',
-                  description: l.vivid_description || l.anchor || l.description || '',
-                  mnemonic: l.anchor || l.mnemonic || '',
-                })));
-              }
-            } else if (event.type === 'complete') {
-              const finalResp = await fetch(`${API_BASE}/loci-jobs/${jobId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (finalResp.ok) {
-                const data = await finalResp.json();
-                finishGeneration(data.loci || []);
-              }
-              return;
-            } else if (event.type === 'error') {
-              throw new Error(event.error || 'Generation failed');
-            }
-          } catch (e: any) {
-            if (e.message?.includes('Generation failed')) throw e;
-          }
-        }
-      }
     } catch (err: any) {
       // Beacon: send failure telemetry
       const API_BASE2 = import.meta.env.VITE_API_URL || '/api';
@@ -175,9 +145,125 @@ export default function PalaceBuilder() {
     }
   };
 
+  /** SSE stream handler with reconnect support */
+  const streamResults = async (API_BASE: string, jobId: string, token: string, lastSeq: number) => {
+    const url = lastSeq > 0
+      ? `${API_BASE}/loci-jobs/${jobId}/stream`
+      : `${API_BASE}/loci-jobs/${jobId}/stream`;
+
+    const streamResp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(lastSeq > 0 ? { 'Last-Event-ID': String(lastSeq) } : {}),
+      },
+    });
+
+    if (!streamResp.ok || !streamResp.body) {
+      // Fall back to polling
+      try {
+        const result = await pollJob(API_BASE, jobId, token);
+        finishGeneration(result, jobId);
+      } catch (e: any) {
+        toast.error(e.message || 'Generation failed');
+        setIsGenerating(false);
+      }
+      return;
+    }
+
+    const reader = streamResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastProcessedSeq = lastSeq;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === 'init' || event.type === 'progress') {
+              setLociProgress({
+                total: event.totalChunks || lociProgress.total,
+                completed: event.completedChunks || 0,
+              });
+              if (event.allLoci?.length) {
+                setLoci(event.allLoci.map((l: any) => ({
+                  concept: l.name || l.concept || '',
+                  description: l.vivid_description || l.anchor || l.description || '',
+                  mnemonic: l.anchor || l.mnemonic || '',
+                })));
+              }
+              lastProcessedSeq = event.completedChunks || lastProcessedSeq;
+
+              // Check for failed chunks in job status
+              if (event.failedChunks !== undefined) {
+                setFailedChunks(event.failedChunks);
+              }
+            } else if (event.type === 'complete') {
+              const finalResp = await fetch(`${API_BASE}/loci-jobs/${jobId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (finalResp.ok) {
+                const data = await finalResp.json();
+                finishGeneration(data.loci || [], jobId);
+              }
+              return;
+            } else if (event.type === 'error') {
+              throw new Error(event.error || 'Generation failed');
+            }
+          } catch (e: any) {
+            if (e.message?.includes('Generation failed')) throw e;
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name === 'AbortError' || e.message?.includes('network')) {
+        // Connection lost — auto-reconnect after 3s
+        toast('Connection lost. Reconnecting...', { icon: '🔌' });
+        await new Promise(r => setTimeout(r, 3000));
+        streamResults(API_BASE, jobId, token, lastProcessedSeq);
+        return;
+      }
+      throw e;
+    }
+  };
+
+  /** Retry failed chunks for a job */
+  const retryFailedChunks = async () => {
+    if (!activeJobId) return;
+    const API_BASE = import.meta.env.VITE_API_URL || '/api';
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const resp = await fetch(`${API_BASE}/loci-jobs/${activeJobId}/retry-chunks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        toast.success(`Retrying ${data.retried} failed chunks...`);
+        setFailedChunks(0);
+        setLociProgress(prev => ({ ...prev, completed: prev.completed - data.retried }));
+        streamResults(API_BASE, activeJobId, token, lociProgress.completed);
+      }
+    } catch (e: any) {
+      toast.error('Retry failed: ' + (e.message || 'Unknown error'));
+    }
+  };
+
   /** Polling fallback when SSE isn't available */
   const pollJob = async (API_BASE: string, jobId: string, token: string): Promise<any[]> => {
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 180; i++) {  // 6 min timeout
       await new Promise(r => setTimeout(r, 2000));
       const pollResp = await fetch(`${API_BASE}/loci-jobs/${jobId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -186,13 +272,19 @@ export default function PalaceBuilder() {
       const job = await pollResp.json();
       setLociProgress({ total: job.totalChunks || 0, completed: job.completedChunks || 0 });
       if (job.status === 'completed') return job.loci || [];
-      if (job.status === 'failed') throw new Error(job.error || 'Generation failed');
+      if (job.status === 'failed' || job.status === 'cost_capped') {
+        throw new Error(job.error || 'Generation failed');
+      }
     }
     throw new Error('Generation timed out — the job may still be processing. Check back later.');
   };
 
-  const finishGeneration = (lociData: any[]) => {
-    if (lociData.length === 0) throw new Error('No concepts extracted — try pasting more text');
+  const finishGeneration = (lociData: any[], jobId?: string) => {
+    if (lociData.length === 0) {
+      toast.error('No concepts extracted — try pasting more text');
+      setIsGenerating(false);
+      return;
+    }
     const mapped: Locus[] = lociData.map((l: any) => ({
       concept: l.name || l.concept || '',
       description: l.vivid_description || l.anchor || l.description || '',
@@ -200,6 +292,7 @@ export default function PalaceBuilder() {
     }));
     setLoci(mapped);
     setStep(3);
+    setIsGenerating(false);
     toast.success(`Generated ${mapped.length} memory loci from ${lociProgress.total || '?'} chunks!`);
   };
 
@@ -399,6 +492,21 @@ export default function PalaceBuilder() {
                       Processing chunk {lociProgress.completed} of {lociProgress.total}
                       {loci.length > 0 && ` • ${loci.length} loci generated so far`}
                     </p>
+                    {failedChunks > 0 && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <Badge variant="destructive" className="text-xs">
+                          {failedChunks} chunk{failedChunks > 1 ? 's' : ''} failed
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => { e.preventDefault(); retryFailedChunks(); }}
+                          className="h-7 text-xs"
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>

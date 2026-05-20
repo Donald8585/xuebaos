@@ -1,4 +1,5 @@
 import type { Env } from "../index";
+import { chatWithFallback } from "./llm-fallback";
 
 // ── AI Service ─────────────────────────────────────────────────────
 // Central service for all AI API calls: DeepSeek, Replicate, Whisper
@@ -390,12 +391,12 @@ ${contextInfo}
 Text:
 ${chunkText.slice(0, 6000)}`;
 
-  const result = await deepseekChat(env, [
+  const result = await chatWithFallback(env, [
     { role: "user", content: prompt },
   ], { temperature: 0.8, maxTokens: 2048 });
 
   // Strip markdown code fences
-  let json = result.trim();
+  let json = result.content.trim();
   if (json.startsWith("```")) {
     json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
   }
@@ -404,15 +405,15 @@ ${chunkText.slice(0, 6000)}`;
     const parsed = JSON.parse(json);
     return Array.isArray(parsed.loci) ? parsed.loci : (Array.isArray(parsed) ? parsed : []);
   } catch (parseErr) {
-    console.error("[loci-chunk] JSON parse failed", { rawResponse: result.slice(0, 300), error: String(parseErr) });
+    console.error("[loci-chunk] JSON parse failed", { rawResponse: result.content.slice(0, 300), error: String(parseErr) });
     // Return partial if possible — extract array-like content
-    const match = result.match(/\[[\s\S]*\]/);
+    const match = result.content.match(/\[[\s\S]*\]/);
     if (match) {
       try {
         return JSON.parse(match[0]);
       } catch { /* fall through */ }
     }
-    throw new Error(`Chunk loci generation returned non-JSON: ${result.slice(0, 200)}`);
+    throw new Error(`Chunk loci generation returned non-JSON: ${result.content.slice(0, 200)}`);
   }
 }
 

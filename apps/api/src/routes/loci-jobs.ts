@@ -330,8 +330,101 @@ lociJobs.get("/:jobId/stream", authMiddleware, async (c) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",  // Disable nginx buffering
     },
   });
+});
+
+// ════════════════════════════════════════════════════════════════
+// POST /api/loci-jobs/estimate-cost — Token-count + cost preview
+// ════════════════════════════════════════════════════════════════
+lociJobs.post("/estimate-cost", authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const text = body.text || "";
+
+    if (!text.trim()) {
+      return c.json({ error: "no_text" }, 400);
+    }
+
+    const { checkCostCap } = await import("../services/cost");
+    const tier = c.get("subscriptionTier") || "free";
+    const result = checkCostCap(text, tier);
+
+    const chunks = Math.ceil(result.estimatedTokens / 2000);
+    const warning = !result.withinCap
+      ? `This document exceeds your plan's HK$${result.cap} cap. Only the first ~${Math.floor(result.estimatedTokens * (result.cap / result.estimatedCost))} tokens will be processed.`
+      : result.estimatedCost > 5
+        ? `Estimated cost: HK$${result.estimatedCost}. This is within your plan limit.`
+        : null;
+
+    return c.json({
+      estimatedTokens: result.estimatedTokens,
+      estimatedCost: result.estimatedCost,
+      estimatedChunks: chunks,
+      cap: result.cap,
+      withinCap: result.withinCap,
+      warning,
+    });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? "") }, 500);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// POST /api/loci-jobs/:jobId/retry-chunks — Retry failed chunks
+// ════════════════════════════════════════════════════════════════
+lociJobs.post("/:jobId/retry-chunks", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+
+  const job = await db.query.lociJobs.findFirst({
+    where: (j: any, { eq: any }: any) => eq(j.id, jobId),
+  });
+  if (!job) return c.json({ error: "not_found" }, 404);
+
+  // Find failed chunks and reset them to pending
+  const failedChunks = await db.select()
+    .from(db.schema.lociChunks)
+    .where(and(
+      eq(db.schema.lociChunks.jobId, jobId),
+      eq(db.schema.lociChunks.status, "failed"),
+    ))
+    .all();
+
+  if (failedChunks.length === 0) {
+    return c.json({ retried: 0, message: "No failed chunks to retry" });
+  }
+
+  // Reset to pending
+  for (const chunk of failedChunks) {
+    await db.update(db.schema.lociChunks)
+      .set({ status: "pending", retryCount: 0, error: null, updatedAt: new Date() } as any)
+      .where(eq(db.schema.lociChunks.id, chunk.id));
+  }
+
+  // Re-enqueue
+  const topic = job.topic || "Study Material";
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < failedChunks.length; i += BATCH_SIZE) {
+    const batch = failedChunks.slice(i, i + BATCH_SIZE);
+    try {
+      await c.env.AI_QUEUE.send(batch.map(chunk => ({
+        type: "process-loci-chunk",
+        userId: job.userId,
+        payload: { jobId, chunkId: chunk.id, topic },
+      })));
+    } catch (e) { /* queue send failure non-fatal */ }
+  }
+
+  // Reset job status if it was failed
+  if (job.status === "failed" || job.status === "cost_capped") {
+    await db.update(db.schema.lociJobs)
+      .set({ status: "generating", error: null, updatedAt: new Date() } as any)
+      .where(eq(db.schema.lociJobs.id, jobId));
+  }
+
+  return c.json({ retried: failedChunks.length });
 });
 
 export default lociJobs;

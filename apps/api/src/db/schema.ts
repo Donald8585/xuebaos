@@ -559,6 +559,7 @@ export const lociJobs = sqliteTable("loci_jobs", {
   error: text("error"),
   plaintextLength: integer("plaintext_length").notNull().default(0),
   estimatedTokens: integer("estimated_tokens").notNull().default(0),
+  costHkd: real("cost_hkd").notNull().default(0.0),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),

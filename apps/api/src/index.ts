@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { logger } from "hono/logger";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { createDb } from "./db/index";
 import { MiddlewareError, validateTABLES } from "./lib/errors";
 
@@ -371,6 +371,37 @@ export default {
       }
     }
   },
+
+  // ── Cron: Cleanup stale jobs (>24h old) ─────────────────────
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const db = createDb(env.DB);
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    try {
+      // Delete jobs older than 24h that are still pending/generating
+      const staleJobs = await db.select({ id: db.schema.lociJobs.id })
+        .from(db.schema.lociJobs)
+        .where(and(
+          sql`created_at < ${Math.floor(cutoff.getTime() / 1000)}`,
+          sql`status IN ('pending','parsing','generating')`,
+        ))
+        .all();
+
+      for (const job of staleJobs) {
+        // Delete chunks first (FK constraint)
+        await db.delete(db.schema.lociChunks)
+          .where(eq(db.schema.lociChunks.jobId, job.id));
+        await db.delete(db.schema.lociJobs)
+          .where(eq(db.schema.lociJobs.id, job.id));
+      }
+
+      if (staleJobs.length > 0) {
+        console.log(`[cron.cleanup] Removed ${staleJobs.length} stale loci jobs`);
+      }
+    } catch (e: any) {
+      console.error("[cron.cleanup.fail]", String(e?.message ?? "").slice(0, 200));
+    }
+  },
 };
 
 async function handleAsyncAIJob(
@@ -444,11 +475,37 @@ async function handleLociChunkJob(
     .where(eq(db.schema.lociChunks.id, chunkId));
 
   try {
-    // Generate loci for this chunk
+    // Generate loci for this chunk with provider fallback
     const { generateLociForChunk } = await import("./services/ai");
+    const { chatWithFallback } = await import("./services/llm-fallback");
+    const { trackJobCost, estimateTokens, estimateCost } = await import("./services/cost");
+
+    // Check cost cap before processing
+    const jobState = await db.query.lociJobs.findFirst({
+      where: (j: any, { eq: any }: any) => eq(j.id, jobId),
+    });
+    const spentSoFar = (jobState?.costHkd as number) ?? 0;
+    const tierResult = trackJobCost(spentSoFar, chunk.tokenCount ?? estimateTokens(chunk.text), "free");
+
+    if (!tierResult.allowed) {
+      console.warn(`[loci-chunk] Cost cap exceeded for job ${jobId}: HK$${spentSoFar.toFixed(2)} / HK$${tierResult.cap}`);
+      await db.update(db.schema.lociJobs)
+        .set({ status: "cost_capped", error: `Cost cap of HK$${tierResult.cap} reached`, updatedAt: new Date() } as any)
+        .where(eq(db.schema.lociJobs.id, jobId));
+      // Mark remaining pending chunks as skipped
+      await db.update(db.schema.lociChunks)
+        .set({ status: "failed", error: "cost_capped", updatedAt: new Date() } as any)
+        .where(and(eq(db.schema.lociChunks.jobId, jobId), eq(db.schema.lociChunks.status, "pending")));
+      return;
+    }
+
     const loci = await generateLociForChunk(env, chunk.text, topic || "Study Material", chunk.sectionTitle || undefined);
 
-    // Store result
+    // Track cost (input + estimated output)
+    const inputTokens = chunk.tokenCount ?? estimateTokens(chunk.text);
+    const chunkCost = estimateCost(inputTokens);
+
+    // Store result + cost
     await db.update(db.schema.lociChunks)
       .set({
         status: "done",
@@ -457,10 +514,11 @@ async function handleLociChunkJob(
       } as any)
       .where(eq(db.schema.lociChunks.id, chunkId));
 
-    // Increment completed count
+    // Increment completed count + cost
     await db.update(db.schema.lociJobs)
       .set({
         completedChunks: sql`completed_chunks + 1`,
+        costHkd: sql`cost_hkd + ${chunkCost}`,
         updatedAt: new Date(),
       } as any)
       .where(eq(db.schema.lociJobs.id, jobId));

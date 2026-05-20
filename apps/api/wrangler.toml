@@ -12,6 +12,10 @@ compatibility_flags = ["nodejs_compat"]
 [env.production]
 route = "api.xuebaos.com/*"
 
+# ── Cron Triggers ────────────────────────────────────────────
+[env.production.triggers]
+crons = ["0 */6 * * *"]  # Cleanup every 6 hours
+
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "xuebaos-db"
