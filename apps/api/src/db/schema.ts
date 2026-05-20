@@ -543,9 +543,54 @@ export const palaceAnchors = sqliteTable("palace_anchors", {
     .default(sql`(unixepoch())`),
 });
 
+// ── Loci Jobs (chunked generation) ────────────────────────────────
+export const lociJobs = sqliteTable("loci_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  fileName: text("file_name"),
+  fileSize: integer("file_size").notNull().default(0),
+  r2Key: text("r2_key"),
+  topic: text("topic"),
+  totalChunks: integer("total_chunks").notNull().default(0),
+  completedChunks: integer("completed_chunks").notNull().default(0),
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  plaintextLength: integer("plaintext_length").notNull().default(0),
+  estimatedTokens: integer("estimated_tokens").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+// ── Loci Chunks (per-chunk generation state) ──────────────────────
+export const lociChunks = sqliteTable("loci_chunks", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id")
+    .notNull()
+    .references(() => lociJobs.id),
+  sequenceIndex: integer("sequence_index").notNull(),
+  text: text("text").notNull(),
+  tokenCount: integer("token_count").notNull().default(0),
+  sectionTitle: text("section_title"),
+  loci: text("loci"),
+  status: text("status").notNull().default("pending"),
+  retryCount: integer("retry_count").notNull().default(0),
+  error: text("error"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ════════════════════════════════════════════════════════════════
 // Typed Table Registry — NEVER bracket-access db.schema
-// ════════════════════════════════════════════════════════════════
 /** All Drizzle table definitions keyed by stable name.
  *  Use this for dynamic table lookups instead of bracket-access on db.schema.
  *  Bracket access on module namespaces breaks Drizzle's .where() callbacks. */
@@ -569,6 +614,8 @@ export const TABLES = {
   conceptChains,
   palaceVideos,
   palaceAnchors,
+  lociJobs,
+  lociChunks,
 } as const;
 
 export type TableName = keyof typeof TABLES;

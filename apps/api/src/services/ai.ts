@@ -354,6 +354,68 @@ ${count ? `Number of loci requested: ${count}` : ""}`;
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Per-Chunk Loci Generation (for chunked pipeline)
+// ══════════════════════════════════════════════════════════════════
+
+const GENERATE_LOCI_FOR_CHUNK_PROMPT = `You are a master of the Method of Loci. Given a text excerpt from a larger document, create vivid memory loci.
+
+For this chunk, generate 3-7 loci that anchor the key concepts to memorable spatial imagery.
+Each locus must be:
+- **name**: A short, unique label for the memory anchor
+- **anchor**: A vivid, bizarre, or exaggerated visual scene combining the concept with a spatial location
+- **vivid_description**: 1-2 sentences of rich sensory detail (sight, sound, smell, touch) to lock the memory
+- **source_excerpt**: The exact phrase or sentence from the input that this locus covers
+
+Return ONLY valid JSON: { "loci": [{ "name": "...", "anchor": "...", "vivid_description": "...", "source_excerpt": "..." }] }`;
+
+export async function generateLociForChunk(
+  env: Env,
+  chunkText: string,
+  topic: string,
+  sectionTitle?: string
+): Promise<Array<{
+  name: string;
+  anchor: string;
+  vivid_description: string;
+  source_excerpt: string;
+}>> {
+  const contextInfo = sectionTitle
+    ? `From section "${sectionTitle}" of "${topic}"`
+    : `From document "${topic}"`;
+
+  const prompt = `${GENERATE_LOCI_FOR_CHUNK_PROMPT}
+
+${contextInfo}
+Text:
+${chunkText.slice(0, 6000)}`;
+
+  const result = await deepseekChat(env, [
+    { role: "user", content: prompt },
+  ], { temperature: 0.8, maxTokens: 2048 });
+
+  // Strip markdown code fences
+  let json = result.trim();
+  if (json.startsWith("```")) {
+    json = json.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed.loci) ? parsed.loci : (Array.isArray(parsed) ? parsed : []);
+  } catch (parseErr) {
+    console.error("[loci-chunk] JSON parse failed", { rawResponse: result.slice(0, 300), error: String(parseErr) });
+    // Return partial if possible — extract array-like content
+    const match = result.match(/\[[\s\S]*\]/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch { /* fall through */ }
+    }
+    throw new Error(`Chunk loci generation returned non-JSON: ${result.slice(0, 200)}`);
+  }
+}
+
 export async function generateStory(
   env: Env,
   topic: string,

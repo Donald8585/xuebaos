@@ -47,6 +47,7 @@ export default function PalaceBuilder() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [loci, setLoci] = useState<Locus[]>([]);
+  const [lociProgress, setLociProgress] = useState({ total: 0, completed: 0 });
   const [inputMode, setInputMode] = useState<InputMode>('paste');
   const [uploadedFileName, setUploadedFileName] = useState('');
   const { getToken } = useAuth();
@@ -62,91 +63,97 @@ export default function PalaceBuilder() {
 
   const handleGenerate = async () => {
     setIsGenerating(true);
+    setLoci([]);
+    setLociProgress({ total: 0, completed: 0 });
     const API_BASE = import.meta.env.VITE_API_URL || '/api';
-    let jobId: string | null = null;
 
     try {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 45000); // 45s client timeout
-
-      const resp = await fetch(`${API_BASE}/ai/generate-palace`, {
+      // ── Submit job to chunked pipeline ──────────────────────────
+      const resp = await fetch(`${API_BASE}/loci-jobs?topic=${encodeURIComponent(subject || 'Study Material')}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          topic: subject || 'Study Material',
-          concepts: [content],
-          count: 20,
-          asyncMode: inputMode === 'upload', // file uploads always async
-        }),
-        signal: controller.signal,
+        body: JSON.stringify({ text: content, fileName: uploadedFileName || 'pasted-text.txt' }),
       });
-      clearTimeout(timeout);
-
-      if (resp.status === 202) {
-        // Large payload → async polling
-        const { jobId: jid } = await resp.json();
-        jobId = jid;
-        toast.success('Large document — processing in background...');
-
-        // Poll every 2s for up to 60s
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          const pollResp = await fetch(`${API_BASE}/ai/jobs/${jobId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!pollResp.ok) continue;
-          const job = await pollResp.json();
-          if (job.status === 'completed') {
-            const generatedLoci: Locus[] = (job.result?.loci || []).map((l: any) => ({
-              concept: l.concept || '',
-              description: l.description || l.locusName || '',
-              mnemonic: l.association || '',
-            }));
-            if (generatedLoci.length === 0) throw new Error('No concepts extracted');
-            setLoci(generatedLoci);
-            setStep(3);
-            toast.success(`Generated ${generatedLoci.length} memory loci!`);
-            return;
-          }
-          if (job.status === 'failed') {
-            throw new Error(job.error || 'AI generation failed');
-          }
-          // status === 'queued' → keep polling
-        }
-        throw new Error('Generation timed out — please try with a smaller document');
-      }
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.detail || err.error || `HTTP ${resp.status}`);
       }
 
-      const data = await resp.json();
-      const generatedLoci: Locus[] = (data.loci || []).map((l: any) => ({
-        concept: l.concept || '',
-        description: l.description || l.locusName || '',
-        mnemonic: l.association || '',
-      }));
+      const { jobId, totalChunks } = await resp.json();
+      setLociProgress({ total: totalChunks, completed: 0 });
 
-      if (generatedLoci.length === 0) throw new Error('No concepts extracted — try pasting more text');
+      if (totalChunks === 0) throw new Error('No content to process');
 
-      setLoci(generatedLoci);
-      setStep(3);
-      toast.success(`Generated ${generatedLoci.length} memory loci!`);
+      // ── SSE stream for progressive results ─────────────────────
+      const streamResp = await fetch(`${API_BASE}/loci-jobs/${jobId}/stream`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!streamResp.ok || !streamResp.body) {
+        // Fall back to polling
+        const result = await pollJob(API_BASE, jobId, token);
+        finishGeneration(result);
+        return;
+      }
+
+      const reader = streamResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'progress') {
+              setLociProgress({ total: event.totalChunks, completed: event.completedChunks });
+              if (event.allLoci?.length) {
+                setLoci(event.allLoci.map((l: any) => ({
+                  concept: l.name || l.concept || '',
+                  description: l.vivid_description || l.anchor || l.description || '',
+                  mnemonic: l.anchor || l.mnemonic || '',
+                })));
+              }
+            } else if (event.type === 'complete') {
+              const finalResp = await fetch(`${API_BASE}/loci-jobs/${jobId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (finalResp.ok) {
+                const data = await finalResp.json();
+                finishGeneration(data.loci || []);
+              }
+              return;
+            } else if (event.type === 'error') {
+              throw new Error(event.error || 'Generation failed');
+            }
+          } catch (e: any) {
+            if (e.message?.includes('Generation failed')) throw e;
+          }
+        }
+      }
     } catch (err: any) {
       // Beacon: send failure telemetry
+      const API_BASE2 = import.meta.env.VITE_API_URL || '/api';
       if (err.name === 'AbortError' || err.name === 'TypeError') {
         try {
-          await fetch(`${API_BASE}/_beacon`, {
+          await fetch(`${API_BASE2}/_beacon`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              route: '/api/ai/generate-palace',
+              route: '/api/loci-jobs',
               fileSize: content?.length || 0,
-              durationMs: 45000,
+              durationMs: 120000,
               effectiveType: (navigator as any)?.connection?.effectiveType || 'unknown',
               errorName: err.name, errorMsg: String(err.message || '').slice(0, 200),
               userAgent: navigator.userAgent.slice(0, 200),
@@ -166,6 +173,34 @@ export default function PalaceBuilder() {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  /** Polling fallback when SSE isn't available */
+  const pollJob = async (API_BASE: string, jobId: string, token: string): Promise<any[]> => {
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const pollResp = await fetch(`${API_BASE}/loci-jobs/${jobId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!pollResp.ok) continue;
+      const job = await pollResp.json();
+      setLociProgress({ total: job.totalChunks || 0, completed: job.completedChunks || 0 });
+      if (job.status === 'completed') return job.loci || [];
+      if (job.status === 'failed') throw new Error(job.error || 'Generation failed');
+    }
+    throw new Error('Generation timed out — the job may still be processing. Check back later.');
+  };
+
+  const finishGeneration = (lociData: any[]) => {
+    if (lociData.length === 0) throw new Error('No concepts extracted — try pasting more text');
+    const mapped: Locus[] = lociData.map((l: any) => ({
+      concept: l.name || l.concept || '',
+      description: l.vivid_description || l.anchor || l.description || '',
+      mnemonic: l.anchor || l.mnemonic || '',
+    }));
+    setLoci(mapped);
+    setStep(3);
+    toast.success(`Generated ${mapped.length} memory loci from ${lociProgress.total || '?'} chunks!`);
   };
 
   const handleSave = async () => {
@@ -357,6 +392,15 @@ export default function PalaceBuilder() {
                     <><Wand2 size={16} className="mr-2" /> Generate Loci with AI</>
                   )}
                 </Button>
+                {isGenerating && lociProgress.total > 0 && (
+                  <div className="mt-3 space-y-1">
+                    <Progress value={(lociProgress.completed / lociProgress.total) * 100} className="h-2" />
+                    <p className="text-xs text-slate-400 text-center">
+                      Processing chunk {lociProgress.completed} of {lociProgress.total}
+                      {loci.length > 0 && ` • ${loci.length} loci generated so far`}
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

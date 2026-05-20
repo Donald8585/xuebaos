@@ -1,0 +1,337 @@
+import { Hono } from "hono";
+import type { Env } from "../index";
+import { authMiddleware } from "../middleware/auth";
+import { chunkText, type ChunkResult } from "../services/chunker";
+import { eq, and, sql } from "drizzle-orm";
+
+const lociJobs = new Hono<{ Bindings: Env; Variables: Record<string, any> }>();
+
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+
+// ════════════════════════════════════════════════════════════════
+// POST /api/loci-jobs — Upload document, parse, chunk, enqueue
+// Returns jobId immediately. Client polls or uses SSE for progress.
+// ════════════════════════════════════════════════════════════════
+lociJobs.post("/", authMiddleware, async (c) => {
+  const requestId = crypto.randomUUID();
+  const internalUserId = c.get("internalUserId");
+  const db = c.get("db");
+
+  try {
+    const contentType = c.req.header("content-type") || "";
+    let plaintext = "";
+    let fileName = "untitled.txt";
+    let fileSize = 0;
+    let r2Key: string | undefined;
+
+    // ── Multipart file upload ────────────────────────────────────
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await c.req.formData();
+      const file = formData.get("file");
+      const topicFromForm = formData.get("topic")?.toString();
+
+      if (file && file instanceof File) {
+        fileName = file.name;
+        fileSize = file.size;
+
+        if (fileSize > MAX_UPLOAD_BYTES) {
+          return c.json({ error: "file_too_large", maxBytes: MAX_UPLOAD_BYTES, actualBytes: fileSize, requestId }, 413);
+        }
+
+        const ext = fileName.split(".").pop()?.toLowerCase();
+        const textTypes = ["txt", "md", "markdown", "csv", "json", "xml", "html", "htm", "srt", "vtt"];
+        const isTextFile = textTypes.includes(ext || "");
+
+        if (isTextFile) {
+          plaintext = await file.text();
+        } else {
+          // Store binary (PDF/DOCX/etc.) to R2 for later async parsing
+          r2Key = `loci-uploads/${internalUserId}/${Date.now()}-${encodeURIComponent(fileName)}`;
+          const buffer = await file.arrayBuffer();
+          const storage = c.env.STORAGE ?? c.env.ASSETS;
+          if (storage) {
+            await storage.put(r2Key, buffer, {
+              httpMetadata: { contentType: file.type || "application/octet-stream" },
+            });
+          }
+          // For now, binary files just get a placeholder — real parsing is a future addition
+          plaintext = `[Binary file: ${fileName} (${fileSize} bytes). Full parsing for PDF/DOCX coming soon.]`;
+        }
+      }
+
+      // Also handle raw text in the form
+      if (!plaintext) {
+        const textField = formData.get("text");
+        if (textField) plaintext = textField.toString();
+      }
+    } else {
+      // ── JSON body (text paste) ──────────────────────────────────
+      const body = await c.req.json().catch(() => ({}));
+      plaintext = body.text || body.content || "";
+      fileName = body.fileName || "pasted-text.txt";
+    }
+
+    if (!plaintext.trim()) {
+      return c.json({ error: "validation_failed", reason: "empty_content", requestId }, 400);
+    }
+
+    const topic = c.req.query("topic") || "Study Material";
+
+    // ── Create job ────────────────────────────────────────────────
+    const jobId = crypto.randomUUID();
+    const estimatedTokens = Math.ceil(plaintext.length / 4);
+
+    await db.insert(db.schema.lociJobs).values({
+      id: jobId,
+      userId: internalUserId,
+      fileName,
+      fileSize,
+      r2Key: r2Key || null,
+      topic,
+      totalChunks: 0,
+      completedChunks: 0,
+      status: "parsing",
+      plaintextLength: plaintext.length,
+      estimatedTokens,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+
+    // ── Chunk the text ────────────────────────────────────────────
+    const chunks = chunkText(plaintext, jobId);
+
+    if (chunks.length === 0) {
+      await db.update(db.schema.lociJobs)
+        .set({ status: "failed", error: "No content to chunk", updatedAt: new Date() } as any)
+        .where(eq(db.schema.lociJobs.id, jobId));
+      return c.json({ error: "no_content", requestId }, 400);
+    }
+
+    // ── Insert chunks into D1 ─────────────────────────────────────
+    for (const chunk of chunks) {
+      await db.insert(db.schema.lociChunks).values({
+        id: chunk.chunkId,
+        jobId,
+        sequenceIndex: chunk.sequenceIndex,
+        text: chunk.text,
+        tokenCount: chunk.tokenCount,
+        sectionTitle: chunk.sectionTitle || null,
+        status: "pending",
+        retryCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+    }
+
+    // ── Update job with chunk count ───────────────────────────────
+    await db.update(db.schema.lociJobs)
+      .set({
+        totalChunks: chunks.length,
+        status: "generating",
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(db.schema.lociJobs.id, jobId));
+
+    // ── Enqueue chunks for processing ─────────────────────────────
+    // Send chunks to queue in batches of 10 to avoid overwhelming the queue
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      try {
+        await c.env.AI_QUEUE.send(batch.map(chunk => ({
+          type: "process-loci-chunk",
+          userId: internalUserId,
+          payload: {
+            jobId,
+            chunkId: chunk.chunkId,
+            topic,
+          },
+        })));
+      } catch (e) {
+        console.error(`[loci-jobs] Queue send failed for batch starting at chunk ${i}:`, e);
+        // Continue — chunks remain in D1, can be picked up by retry
+      }
+    }
+
+    console.log(`[loci-jobs] Job ${jobId}: ${chunks.length} chunks enqueued (${plaintext.length} chars, ~${estimatedTokens} tokens)`);
+
+    return c.json({
+      jobId,
+      status: "generating",
+      totalChunks: chunks.length,
+      completedChunks: 0,
+      estimatedTokens,
+      requestId,
+    }, 202);
+
+  } catch (e: any) {
+    console.error("[loci-jobs.create.fail]", JSON.stringify({
+      requestId,
+      msg: String(e?.message ?? "").slice(0, 300),
+    }));
+    return c.json({
+      error: "job_creation_failed",
+      detail: String(e?.message ?? "").slice(0, 200),
+      requestId,
+    }, 500);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// GET /api/loci-jobs/:jobId — Job status + collected loci
+// ════════════════════════════════════════════════════════════════
+lociJobs.get("/:jobId", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+
+  const job = await db.query.lociJobs.findFirst({
+    where: (j: any, { eq }: any) => eq(j.id, jobId),
+  });
+
+  if (!job) return c.json({ error: "not_found" }, 404);
+
+  // Collect completed loci from chunks
+  const completedChunks = await db.select()
+    .from(db.schema.lociChunks)
+    .where(and(
+      eq(db.schema.lociChunks.jobId, jobId),
+      eq(db.schema.lociChunks.status, "done"),
+    ))
+    .orderBy(db.schema.lociChunks.sequenceIndex)
+    .all();
+
+  const allLoci: any[] = [];
+  for (const chunk of completedChunks) {
+    if (chunk.loci) {
+      try {
+        const parsed = JSON.parse(chunk.loci);
+        allLoci.push(...(Array.isArray(parsed) ? parsed : []));
+      } catch { /* skip malformed JSON */ }
+    }
+  }
+
+  return c.json({
+    jobId: job.id,
+    status: job.status,
+    totalChunks: job.totalChunks,
+    completedChunks: job.completedChunks,
+    error: job.error,
+    loci: allLoci,
+    fileName: job.fileName,
+    estimatedTokens: job.estimatedTokens,
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// GET /api/loci-jobs/:jobId/stream — SSE progress stream
+// ════════════════════════════════════════════════════════════════
+lociJobs.get("/:jobId/stream", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+
+  // Check job exists
+  const job = await db.query.lociJobs.findFirst({
+    where: (j: any, { eq }: any) => eq(j.id, jobId),
+  });
+  if (!job) return c.json({ error: "not_found" }, 404);
+
+  let lastCompleted = job.completedChunks ?? 0;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (data: string) => controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+
+      // Send initial state
+      send(JSON.stringify({
+        type: "init",
+        jobId,
+        totalChunks: job.totalChunks,
+        completedChunks: lastCompleted,
+        status: job.status,
+      }));
+
+      // Poll for updates every 2s, max 5 minutes
+      const maxPolls = 150; // 150 × 2s = 5min
+      for (let poll = 0; poll < maxPolls; poll++) {
+        await new Promise(r => setTimeout(r, 2000));
+
+        try {
+          const updated = await db.query.lociJobs.findFirst({
+            where: (j: any, { eq }: any) => eq(j.id, jobId),
+          });
+
+          if (!updated) {
+            send(JSON.stringify({ type: "error", error: "Job not found" }));
+            controller.close();
+            return;
+          }
+
+          const completed = updated.completedChunks ?? 0;
+          const total = updated.totalChunks ?? 0;
+
+          // Fetch newly completed loci
+          if (completed > lastCompleted) {
+            const newChunks = await db.select()
+              .from(db.schema.lociChunks)
+              .where(and(
+                eq(db.schema.lociChunks.jobId, jobId),
+                eq(db.schema.lociChunks.status, "done"),
+              ))
+              .orderBy(db.schema.lociChunks.sequenceIndex)
+              .all();
+
+            const newLoci: any[] = [];
+            for (const chunk of newChunks) {
+              if (chunk.loci) {
+                try {
+                  const parsed = JSON.parse(chunk.loci);
+                  newLoci.push(...(Array.isArray(parsed) ? parsed : []));
+                } catch { /* skip */ }
+              }
+            }
+
+            send(JSON.stringify({
+              type: "progress",
+              completedChunks: completed,
+              totalChunks: total,
+              newLoci,
+              allLoci: newLoci,
+            }));
+
+            lastCompleted = completed;
+          }
+
+          // Terminal states
+          if (updated.status === "completed") {
+            send(JSON.stringify({ type: "complete", totalLoci: lastCompleted }));
+            controller.close();
+            return;
+          }
+          if (updated.status === "failed") {
+            send(JSON.stringify({ type: "error", error: updated.error || "Generation failed" }));
+            controller.close();
+            return;
+          }
+        } catch (e) {
+          // DB query failed — keep polling
+          console.error("[loci-jobs.stream.poll-err]", e);
+        }
+      }
+
+      // Timeout
+      send(JSON.stringify({ type: "error", error: "Stream timeout — job may still be processing" }));
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+});
+
+export default lociJobs;

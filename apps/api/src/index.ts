@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { logger } from "hono/logger";
+import { eq, sql } from "drizzle-orm";
 import { createDb } from "./db/index";
 import { MiddlewareError, validateTABLES } from "./lib/errors";
 
@@ -34,6 +35,7 @@ import statsRoutes from "./routes/stats";
 import clerkWebhookRoutes from "./routes/clerk-webhook";
 import videoRoutes from "./routes/videos";
 import anchorRoutes from "./routes/anchors";
+import lociJobsRoutes from "./routes/loci-jobs";
 
 // ── Services ────────────────────────────────────────────────────
 import { createStorageService } from "./services/storage";
@@ -201,6 +203,7 @@ app.route("/api/stats", statsRoutes);
 app.route("/api/clerk", clerkWebhookRoutes);
 app.route("/api/videos", videoRoutes);
 app.route("/api/anchors", anchorRoutes);
+app.route("/api/loci-jobs", lociJobsRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // Storage Routes (proxied R2)
@@ -355,6 +358,9 @@ export default {
           case "generate-questions":
             await handleAsyncAIJob(env, job);
             break;
+          case "process-loci-chunk":
+            await handleLociChunkJob(env, job);
+            break;
           default:
             console.warn(`Unknown job type: ${job.type}`);
         }
@@ -402,6 +408,99 @@ async function handleAsyncAIJob(
         });
       }
       break;
+    }
+  }
+}
+
+/** Process a single loci chunk: fetch from D1 → call LLM → store result → update progress */
+async function handleLociChunkJob(
+  env: Env,
+  job: { type: string; userId: string; payload: Record<string, unknown> }
+): Promise<void> {
+  const { jobId, chunkId, topic } = job.payload as { jobId: string; chunkId: string; topic?: string };
+  if (!jobId || !chunkId) {
+    console.error("[loci-chunk] Missing jobId or chunkId");
+    return;
+  }
+
+  const db = createDb(env.DB);
+
+  // Fetch chunk from D1
+  const chunk = await db.query.lociChunks.findFirst({
+    where: (c: any, { eq }: any) => eq(c.id, chunkId),
+  });
+  if (!chunk) {
+    console.error(`[loci-chunk] Chunk ${chunkId} not found`);
+    return;
+  }
+  if (chunk.status !== "pending") {
+    console.log(`[loci-chunk] Chunk ${chunkId} already ${chunk.status}, skipping`);
+    return;
+  }
+
+  // Mark as processing
+  await db.update(db.schema.lociChunks)
+    .set({ status: "processing", updatedAt: new Date() } as any)
+    .where(eq(db.schema.lociChunks.id, chunkId));
+
+  try {
+    // Generate loci for this chunk
+    const { generateLociForChunk } = await import("./services/ai");
+    const loci = await generateLociForChunk(env, chunk.text, topic || "Study Material", chunk.sectionTitle || undefined);
+
+    // Store result
+    await db.update(db.schema.lociChunks)
+      .set({
+        status: "done",
+        loci: JSON.stringify(loci),
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(db.schema.lociChunks.id, chunkId));
+
+    // Increment completed count
+    await db.update(db.schema.lociJobs)
+      .set({
+        completedChunks: sql`completed_chunks + 1`,
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(db.schema.lociJobs.id, jobId));
+
+    // Check if all chunks are done
+    const job = await db.query.lociJobs.findFirst({
+      where: (j: any, { eq }: any) => eq(j.id, jobId),
+    });
+    if (job && job.completedChunks >= job.totalChunks) {
+      await db.update(db.schema.lociJobs)
+        .set({ status: "completed", updatedAt: new Date() } as any)
+        .where(eq(db.schema.lociJobs.id, jobId));
+      console.log(`[loci-chunk] Job ${jobId} completed — ${job.totalChunks} chunks processed`);
+    }
+
+  } catch (e: any) {
+    const retryCount = (chunk.retryCount ?? 0) + 1;
+    const maxRetries = 3;
+    const isFatal = retryCount >= maxRetries;
+
+    console.error(`[loci-chunk] Chunk ${chunkId} failed (attempt ${retryCount}/${maxRetries}):`, String(e?.message ?? "").slice(0, 200));
+
+    await db.update(db.schema.lociChunks)
+      .set({
+        status: isFatal ? "failed" : "pending",
+        retryCount: retryCount,
+        error: String(e?.message ?? "").slice(0, 500),
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(db.schema.lociChunks.id, chunkId));
+
+    if (isFatal) {
+      // Mark job as failed if any chunk fatally fails
+      await db.update(db.schema.lociJobs)
+        .set({
+          status: "failed",
+          error: `Chunk ${chunk.sequenceIndex} failed after ${maxRetries} retries: ${String(e?.message ?? "").slice(0, 200)}`,
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(db.schema.lociJobs.id, jobId));
     }
   }
 }
