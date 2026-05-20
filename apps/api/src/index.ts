@@ -42,6 +42,7 @@ import { createStorageService } from "./services/storage";
 export interface Env {
   DB: D1Database;
   STORAGE: R2Bucket;
+  ASSETS: R2Bucket;
   IMAGES: R2Bucket;
   CACHE: KVNamespace;
   AI_QUEUE: Queue;

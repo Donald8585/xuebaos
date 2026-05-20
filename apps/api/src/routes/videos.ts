@@ -40,9 +40,14 @@ videos.post("/", authMiddleware, async (c) => {
     }
 
     // Upload to R2
+    const storage = c.env.STORAGE ?? c.env.ASSETS;
+    if (!storage) {
+      console.error("[videos.upload] No STORAGE or ASSETS R2 binding configured");
+      return c.json({ error: "storage_unavailable", reason: "no_r2_binding", requestId }, 500);
+    }
     const r2Key = `users/${internalUserId}/videos/${Date.now()}-${encodeURIComponent(file.name)}`;
     const buffer = await file.arrayBuffer();
-    await c.env.STORAGE.put(r2Key, buffer, {
+    await storage.put(r2Key, buffer, {
       httpMetadata: { contentType: file.type || "video/mp4" },
     });
 

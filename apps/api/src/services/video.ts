@@ -13,13 +13,23 @@ interface VideoMetadata {
   fileName: string;
 }
 
+/** Resolve the best available R2 bucket (STORAGE → ASSETS → IMAGES) */
+function resolveBucket(env: Env): R2Bucket {
+  const bucket = env.STORAGE ?? env.ASSETS;
+  if (!bucket) {
+    throw new Error("No R2 binding configured — add STORAGE or ASSETS to wrangler.toml");
+  }
+  return bucket;
+}
+
 /** Parse basic video metadata from an R2 object */
 export async function getVideoMetadata(
   env: Env,
   r2Key: string
 ): Promise<VideoMetadata | null> {
   try {
-    const object = await env.STORAGE.head(r2Key);
+    const bucket = resolveBucket(env);
+    const object = await bucket.head(r2Key);
     if (!object) return null;
 
     return {
@@ -32,7 +42,7 @@ export async function getVideoMetadata(
   }
 }
 
-/** Upload a scene thumbnail (base64 JPEG) to R2 IMAGES */
+/** Upload a scene thumbnail (base64 JPEG) to R2 */
 export async function storeSceneThumbnail(
   env: Env,
   videoId: string,
@@ -40,7 +50,7 @@ export async function storeSceneThumbnail(
   base64Data: string
 ): Promise<{ key: string; publicUrl: string }> {
   const key = `scenes/${videoId}/${timestampSeconds}.jpg`;
-  
+
   // Strip data URI prefix if present
   const match = base64Data.match(/^data:image\/\w+;base64,(.+)$/);
   const b64 = match ? match[1] : base64Data;
@@ -50,7 +60,11 @@ export async function storeSceneThumbnail(
     bytes[i] = binary.charCodeAt(i);
   }
 
-  const bucket = env.IMAGES || env.STORAGE;
+  // Thumbnails go to IMAGES if available, fallback to STORAGE/ASSETS
+  const bucket = env.IMAGES ?? env.STORAGE ?? env.ASSETS;
+  if (!bucket) {
+    throw new Error("No R2 binding configured for thumbnails");
+  }
   await bucket.put(key, bytes.buffer, {
     httpMetadata: { contentType: "image/jpeg" },
   });
@@ -65,13 +79,19 @@ export async function deleteVideoAssets(
   r2Key: string
 ): Promise<void> {
   try {
-    await env.STORAGE.delete(r2Key);
+    const storageBucket = resolveBucket(env);
+    await storageBucket.delete(r2Key);
+
     // Delete scene thumbnails (best-effort via listing)
-    const bucket = env.IMAGES || env.STORAGE;
-    const prefix = `scenes/${videoId}/`;
-    const listed = await bucket.list({ prefix });
-    for (const obj of listed.objects) {
-      await bucket.delete(obj.key);
+    const imagesBucket = env.IMAGES ?? env.STORAGE ?? env.ASSETS;
+    if (imagesBucket) {
+      const prefix = `scenes/${videoId}/`;
+      const listed = await imagesBucket.list({ prefix });
+      for (const obj of listed.objects) {
+        try {
+          await imagesBucket.delete(obj.key);
+        } catch { /* best-effort */ }
+      }
     }
   } catch (e) {
     console.error("[video.delete] Failed to delete assets:", e);

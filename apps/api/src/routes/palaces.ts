@@ -429,15 +429,20 @@ palaces.post("/", authMiddleware, checkLimit("palaces"), async (c) => {
   }
 
   // Upload stripped images to R2 (best-effort, non-blocking)
-  for (const upload of r2Uploads) {
-    try {
-      await c.env.STORAGE.put(upload.key, upload.data, {
-        httpMetadata: { contentType: upload.mime },
-      });
-    } catch (e) {
-      console.error(`[palaces.create.r2] Failed to upload ${upload.key}:`, (e as any)?.message);
-      // Continue — the imageKey is stored, upload can be retried
+  const storage = c.env.STORAGE ?? c.env.ASSETS;
+  if (storage) {
+    for (const upload of r2Uploads) {
+      try {
+        await storage.put(upload.key, upload.data, {
+          httpMetadata: { contentType: upload.mime },
+        });
+      } catch (e) {
+        console.error(`[palaces.create.r2] Failed to upload ${upload.key}:`, (e as any)?.message);
+        // Continue — the imageKey is stored, upload can be retried
+      }
     }
+  } else {
+    console.warn(`[palaces.create.r2] No STORAGE or ASSETS binding — skipping ${r2Uploads.length} uploads`);
   }
 
   // ── B.4 Build extras JSON ─────────────────────────────────────

@@ -22,6 +22,10 @@ binding = "ASSETS"
 bucket_name = "xuebaos-assets"
 
 [[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "xuebaos-storage"
+
+[[env.production.r2_buckets]]
 binding = "IMAGES"
 bucket_name = "xuebaos-images"
 
