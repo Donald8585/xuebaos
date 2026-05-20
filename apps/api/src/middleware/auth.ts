@@ -124,13 +124,10 @@ export async function authMiddleware(
         c.set("internalUserId", id);
         c.set("userTier", isFounder ? "xueshen" : "free");
       } else {
-        if (isFounder && user.subscriptionTier !== "xueshen") {
-          await db.update(db.schema.users).set({
-            subscriptionTier: "xueshen", subscriptionEnds: new Date("2099-12-31"), updatedAt: new Date(),
-          }).where(eq(db.schema.users.clerkId, clerkUserId));
-        }
+        // User exists — always trust stored tier over JWT email
+        // Clerk session tokens may not include email claim
         c.set("internalUserId", user.id);
-        c.set("userTier", isFounder ? "xueshen" : (user.subscriptionTier || "free"));
+        c.set("userTier", user.subscriptionTier || "free");
       }
     }
     await next();
