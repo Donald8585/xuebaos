@@ -8,7 +8,7 @@ import { authMiddleware } from "../middleware/auth";
 const floorPlanJobs = new Hono<{ Bindings: Env; Variables: Record<string, any> }>();
 
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200MB
-const MAX_FRAMES = 8;
+const MAX_FRAMES = 20;
 
 const createSchema = z.object({
   frames: z.array(z.string()).min(1).max(MAX_FRAMES),
