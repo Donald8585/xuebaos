@@ -62,14 +62,12 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
       updatedAt: new Date(),
     } as any);
 
-    // ── Select 5 key frames for analysis ──────────────────────────
-    const forcedFrames = validFrames.filter((_: string, i: number) =>
-      i === 0 || i === Math.floor(validFrames.length / 4) ||
-      i === Math.floor(validFrames.length / 2) ||
-      i === Math.floor(3 * validFrames.length / 4) ||
-      i === validFrames.length - 1
-    );
-    const framesToAnalyze = forcedFrames.length >= 3 ? forcedFrames : validFrames.slice(0, 5);
+    // ── Select 3 best frames (first/mid/last) for speed ──────────
+    const framesToAnalyze = [
+      validFrames[0],
+      validFrames[Math.floor(validFrames.length / 2)],
+      validFrames[validFrames.length - 1],
+    ].filter(Boolean);
 
     // ── Extract floor plan directly (5 frames, ~5-10s, fast enough for sync) ──
     try {

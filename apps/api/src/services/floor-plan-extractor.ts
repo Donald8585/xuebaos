@@ -63,55 +63,16 @@ function cacheSet(key: string, schema: FloorPlanSchema): void {
 // Vision LLM Strategy (upgraded multi-step prompt)
 // ══════════════════════════════════════════════════════════════════
 
-const FLOOR_PLAN_SYSTEM_PROMPT = `You are an expert architectural space analyzer. Given frames from a home walkthrough video, produce an accurate JSON floor plan.
+const FLOOR_PLAN_SYSTEM_PROMPT = `You are an architectural space analyzer. From home walkthrough frames, output a floor plan JSON.
 
-## STEP 1 — Room Inventory
-List EVERY distinct room visible across ALL frames. Look for:
-- Doorways, archways, and openings that separate spaces
-- Changes in flooring (hardwood→tile, carpet→tile)
-- Different wall colors, furniture styles, or lighting fixtures
-- Window positions and sizes (different windows = different room)
-- **CRITICAL**: If you see what looks like a bedroom at two different points in the walkthrough, they are SEPARATE bedrooms. Homes typically have 1-3 bedrooms. Count them.
-- Treat similar-looking rooms as separate if they appear at different walkthrough points.
+Steps:
+1. List EVERY room across all frames. Count bedrooms: if seen at different walkthrough points → SEPARATE.
+2. Determine connections + layout (linear/L-shaped/hallway-centered).
+3. For each room: approx_position {x:0-1,z:0-1} in 2D (0=top-left, 1=bottom-right).
 
-## STEP 2 — Layout Reasoning
-Determine how rooms connect:
-- Which room does the entrance lead to?
-- What rooms connect through doorways/archways?
-- Is the layout linear, L-shaped, or centered around a hallway?
-- For each room, estimate approx_position { x: 0-1, z: 0-1 } in normalized 2D space (0,0 = top-left, 1,1 = bottom-right). Front-to-back = increasing z. Left-to-right = increasing x.
-- DO NOT lay out rooms in a flat horizontal strip. Use 2D placement based on observed spatial relationships.
+Return ONLY: { "rooms": [{ "name", "width_m", "height_m", "connections":[], "approx_position":{x,z}, "evidence_frame_indices":[], "notable_features":[], "floor_type" }], "layout_topology", "ambiguities":[] }
 
-## STEP 3 — Final JSON
-Return ONLY valid JSON:
-{
-  "rooms": [{
-    "name": "Living Room",
-    "width_m": 4.5,
-    "height_m": 5.0,
-    "connections": ["Kitchen", "Hallway"],
-    "approx_position": { "x": 0.5, "z": 0.3 },
-    "evidence_frame_indices": [0, 2],
-    "notable_features": ["red sofa", "TV unit"],
-    "floor_type": "hardwood"
-  }],
-  "layout_topology": "L-shaped",
-  "ambiguities": ["Could not determine if room 4 is a bathroom or closet"]
-}
-
-## EXAMPLE 1: Linear 1BR apartment
-{"rooms":[{"name":"Entryway","width_m":1.5,"height_m":2.0,"connections":["Living Room"],"approx_position":{"x":0.5,"z":0.05},"evidence_frame_indices":[0],"floor_type":"tile"},{"name":"Living Room","width_m":4.0,"height_m":5.0,"connections":["Entryway","Kitchen","Hallway"],"approx_position":{"x":0.5,"z":0.3},"evidence_frame_indices":[1,2],"notable_features":["gray sofa","coffee table"],"floor_type":"hardwood"},{"name":"Kitchen","width_m":2.5,"height_m":3.0,"connections":["Living Room"],"approx_position":{"x":0.1,"z":0.3},"evidence_frame_indices":[2],"notable_features":["white cabinets"],"floor_type":"tile"},{"name":"Hallway","width_m":1.0,"height_m":3.0,"connections":["Living Room","Bedroom","Bathroom"],"approx_position":{"x":0.5,"z":0.6},"evidence_frame_indices":[3,4],"floor_type":"hardwood"},{"name":"Bedroom","width_m":3.5,"height_m":4.0,"connections":["Hallway"],"approx_position":{"x":0.5,"z":0.85},"evidence_frame_indices":[5,6],"notable_features":["queen bed","wardrobe"],"floor_type":"carpet"},{"name":"Bathroom","width_m":2.0,"height_m":2.5,"connections":["Hallway"],"approx_position":{"x":0.2,"z":0.7},"evidence_frame_indices":[7],"floor_type":"tile"}],"layout_topology":"linear","ambiguities":[]}
-
-## EXAMPLE 2: L-shaped 2BR apartment
-{"rooms":[{"name":"Entryway","width_m":2.0,"height_m":2.0,"connections":["Living Room"],"approx_position":{"x":0.5,"z":0.05}},{"name":"Living Room","width_m":5.0,"height_m":5.0,"connections":["Entryway","Kitchen","Hallway"],"approx_position":{"x":0.4,"z":0.3}},{"name":"Kitchen","width_m":3.0,"height_m":3.0,"connections":["Living Room"],"approx_position":{"x":0.15,"z":0.2}},{"name":"Hallway","width_m":1.2,"height_m":3.5,"connections":["Living Room","Bedroom 1","Bedroom 2","Bathroom"],"approx_position":{"x":0.7,"z":0.5}},{"name":"Bedroom 1","width_m":3.5,"height_m":3.5,"connections":["Hallway"],"approx_position":{"x":0.7,"z":0.8}},{"name":"Bedroom 2","width_m":3.0,"height_m":3.0,"connections":["Hallway"],"approx_position":{"x":0.9,"z":0.6}},{"name":"Bathroom","width_m":2.0,"height_m":2.5,"connections":["Hallway"],"approx_position":{"x":0.5,"z":0.7}}],"layout_topology":"L-shaped","ambiguities":[]}
-
-## RULES
-- Every room must connect to at least one other room. Connections must form a traversable graph.
-- approx_position must form a plausible 2D layout (no overlapping rooms, walkable).
-- Default dimensions: 3.5m × 3.5m if uncertain.
-- Indicate ambiguity rather than guessing.
-- DO NOT merge similar rooms seen at different walkthrough points.
-- DO NOT lay out rooms in a flat horizontal strip. Use 2D placement.`;
+RULES: Default 3.5m×3.5m. No flat horizontal strips — use 2D. Connections must be traversable. Never merge rooms at different points.`;
 
 async function extractWithVisionLLM(
   env: Env,

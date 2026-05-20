@@ -101,7 +101,7 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
 
       // Submit frames — server processes inline and returns result directly
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
+      const timeout = setTimeout(() => controller.abort(), 120000); // 120s timeout
 
       try {
         const resp = await fetch(`${API_BASE}/floor-plan-jobs`, {
