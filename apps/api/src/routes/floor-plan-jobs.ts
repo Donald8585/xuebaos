@@ -62,11 +62,22 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
       updatedAt: new Date(),
     } as any);
 
-    // ── Extract floor plan in background ───────────────────────────
+    // ── Extract floor plan using only key forced frames ───────────
+    // Full 13-16 frame payloads can timeout CF Worker waitUntil.
+    // Use only 5 forced-position frames (0/25/50/75/100%) for speed.
+    const forcedFrames = validFrames.filter((_: string, i: number) =>
+      i === 0 || i === Math.floor(validFrames.length / 4) ||
+      i === Math.floor(validFrames.length / 2) ||
+      i === Math.floor(3 * validFrames.length / 4) ||
+      i === validFrames.length - 1
+    );
+    const framesToAnalyze = forcedFrames.length >= 3 ? forcedFrames : validFrames.slice(0, 5);
+    console.log(`[floor-plan] Using ${framesToAnalyze.length}/${validFrames.length} key frames`);
+
     c.executionCtx.waitUntil((async () => {
       try {
         const { extractFloorPlan } = await import("../services/floor-plan-extractor");
-        const schema = await extractFloorPlan(c.env, validFrames);
+        const schema = await extractFloorPlan(c.env, framesToAnalyze);
 
         const roomCount = schema.rooms?.length || 0;
         await db.update(db.schema.floorPlans)
