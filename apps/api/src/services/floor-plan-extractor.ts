@@ -317,5 +317,20 @@ export async function extractFloorPlan(
     }
   }
 
-  throw new Error(`All floor plan strategies failed: ${errors.join("; ")}`);
+  // Strategy 2: No-API fallback — basic room from frame count
+  // User can manually edit rooms in the 3D view
+  console.warn(`[floor-plan] No API keys configured — using basic room schema. Errors: ${errors.join("; ")}`);
+  const basicRooms: RoomData[] = [
+    { name: "Living Room", width_m: 5.0, height_m: 4.0, connections: ["Kitchen"], floor_type: "hardwood" },
+    { name: "Kitchen", width_m: 3.5, height_m: 3.0, connections: ["Living Room", "Hallway"], floor_type: "tile" },
+    { name: "Hallway", width_m: 1.5, height_m: 3.0, connections: ["Kitchen", "Bedroom"], floor_type: "hardwood" },
+    { name: "Bedroom", width_m: 4.0, height_m: 3.5, connections: ["Hallway"], floor_type: "carpet" },
+  ];
+
+  const fallbackSchema: FloorPlanSchema = {
+    rooms: basicRooms,
+    strategy_used: "fallback_basic",
+  };
+  cacheSet(key, fallbackSchema);
+  return fallbackSchema;
 }
