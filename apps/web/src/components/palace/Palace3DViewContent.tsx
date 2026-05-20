@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react';
-import { ArrowLeft, Maximize2, Minimize2, Eye, Pause, Play, Wand2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Maximize2, Minimize2, Eye, Pause, Play, Wand2, Loader2, Save, MapPin } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { HomeScanCapture } from './HomeScanCapture';
 import { PalaceRenderer } from './PalaceRenderer';
+import { Palace3DTour } from './Palace3DTour';
 import { VizErrorBoundary } from './VizErrorBoundary';
 
 interface RoomData {
@@ -75,7 +76,7 @@ export default function Palace3DViewContent() {
   const [step, setStep] = useState<'scan' | 'view'>('scan');
   const [rooms, setRooms] = useState<RoomData[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<string | undefined>();
-  const [mode, setMode] = useState<'orbit' | 'walk'>('orbit');
+  const [mode, setMode] = useState<'orbit' | 'walk' | 'tour'>('orbit');
   const [fullscreen, setFullscreen] = useState(false);
 
   // ── Loci generation state ────────────────────────────────────
@@ -90,6 +91,33 @@ export default function Palace3DViewContent() {
     setRooms(result.rooms);
     setStep('view');
   }, []);
+
+  const handleSavePalace = async () => {
+    const API_BASE = import.meta.env.VITE_API_URL || '/api';
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const resp = await fetch(`${API_BASE}/palaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: 'My Home Palace',
+          subject: 'General',
+          lociCount: loci.length,
+          loci: loci.map(l => ({ concept: l.concept, description: l.description, mnemonic: l.mnemonic })),
+          spatialMap: rooms.map((r: any, i: number) => ({ id: `room-${i}`, name: r.name, x: r.x || 0, y: r.z || 0, width: r.width_m * 100, height: r.height_m * 100, connections: r.connections })),
+        }),
+      });
+      if (resp.ok) {
+        import('react-hot-toast').then(t => t.default.success('Palace saved!'));
+      }
+    } catch { /* save best-effort */ }
+  };
+
+  const handleTourComplete = (events: any[]) => {
+    console.log('[tour] Complete:', events.length, 'loci visited');
+    setMode('orbit');
+  };
 
   const handleGenerateLoci = async () => {
     if (!studyText.trim() || !rooms.length) return;
@@ -195,22 +223,30 @@ export default function Palace3DViewContent() {
 
           {step === 'view' && (
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMode(mode === 'orbit' ? 'walk' : 'orbit')}
-              >
-                {mode === 'orbit' ? (
-                  <><Eye size={14} className="mr-1" /> Walk Mode</>
-                ) : (
-                  <><Pause size={14} className="mr-1" /> Orbit Mode</>
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setFullscreen(!fullscreen)}
-              >
+              {mode !== 'tour' && loci.length > 0 && (
+                <>
+                  <Button variant="outline" size="sm" onClick={handleSavePalace}>
+                    <Save size={14} className="mr-1" /> Save Palace
+                  </Button>
+                  <Button variant="default" size="sm" onClick={() => setMode('tour')}>
+                    <MapPin size={14} className="mr-1" /> Start Tour
+                  </Button>
+                </>
+              )}
+              {mode !== 'tour' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMode(mode === 'orbit' ? 'walk' : 'orbit')}
+                >
+                  {mode === 'orbit' ? (
+                    <><Eye size={14} className="mr-1" /> Walk Mode</>
+                  ) : (
+                    <><Pause size={14} className="mr-1" /> Orbit Mode</>
+                  )}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => setFullscreen(!fullscreen)}>
                 {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               </Button>
             </div>
@@ -226,14 +262,23 @@ export default function Palace3DViewContent() {
         )}
 
         {step === 'view' && rooms.length > 0 && (
-          <div className="space-y-3">
-            <PalaceRenderer
-              rooms={rooms}
-              loci={loci}
-              mode={mode}
-              selectedRoom={selectedRoom}
-              onRoomClick={setSelectedRoom}
-            />
+          <>
+            {mode === 'tour' ? (
+              <Palace3DTour
+                rooms={rooms.map((r, i) => ({ ...r, x: 0, z: i * 5 }))}
+                loci={loci}
+                onComplete={handleTourComplete}
+                onExit={() => setMode('orbit')}
+              />
+            ) : (
+              <div className="space-y-3">
+                <PalaceRenderer
+                  rooms={rooms}
+                  loci={loci}
+                  mode={mode}
+                  selectedRoom={selectedRoom}
+                  onRoomClick={setSelectedRoom}
+                />
 
             {/* Room legend */}
             <div className="flex flex-wrap gap-2">
@@ -255,6 +300,8 @@ export default function Palace3DViewContent() {
               ))}
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </VizErrorBoundary>
