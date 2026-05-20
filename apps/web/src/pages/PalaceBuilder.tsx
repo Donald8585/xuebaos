@@ -110,7 +110,7 @@ export default function PalaceBuilder() {
       if (totalChunks === 0) throw new Error('No content to process');
 
       // ── SSE stream for progressive results ─────────────────────
-      streamResults(API_BASE, jobId, token, 0);
+      await streamResults(API_BASE, jobId, token, 0);
 
     } catch (err: any) {
       // Beacon: send failure telemetry
