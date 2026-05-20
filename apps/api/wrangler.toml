@@ -30,7 +30,7 @@ binding = "IMAGES"
 bucket_name = "xuebaos-images"
 
 [[env.production.kv_namespaces]]
-binding = "KV"
+binding = "CACHE"
 id = "105dde0b82f84d1e83fb469026a2fc71"
 
 [[env.production.queues.producers]]

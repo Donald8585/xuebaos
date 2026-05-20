@@ -378,11 +378,11 @@ async function handleAsyncAIJob(
       try {
         const { generatePalace } = await import("./services/ai");
         const result = await generatePalace(env, topic, concepts, count);
-        if (jobId) {
+        if (jobId && env.CACHE) {
           await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "completed", result }), { expirationTtl: 3600 });
         }
       } catch (e: any) {
-        if (jobId) {
+        if (jobId && env.CACHE) {
           await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "failed", error: String(e?.message ?? "AI generation failed").slice(0, 500) }), { expirationTtl: 3600 });
         }
       }
@@ -396,7 +396,7 @@ async function handleAsyncAIJob(
       const { generateQuestions } = await import("./services/ai");
       const result = await generateQuestions(env, subject, topic, content, mode as any, difficulty, count);
       const jobId = job.payload.jobId as string;
-      if (jobId) {
+      if (jobId && env.CACHE) {
         await env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "completed", result }), {
           expirationTtl: 3600,
         });

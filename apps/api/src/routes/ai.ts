@@ -101,8 +101,12 @@ ai.post("/generate-palace", authMiddleware, zValidator("json", generatePalaceSch
         userId: internalUserId,
         payload: { topic: body.topic, concepts: body.concepts, count: body.count, jobId },
       });
-      // Store pending job in KV for polling
-      await c.env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "queued", requestId }), { expirationTtl: 3600 });
+      // Store pending job in KV for polling (best-effort)
+      if (c.env.CACHE) {
+        await c.env.CACHE.put(`job:${jobId}`, JSON.stringify({ status: "queued", requestId }), { expirationTtl: 3600 });
+      } else {
+        console.warn("[ai.generate-palace] CACHE KV binding unavailable — job status polling disabled");
+      }
       return c.json({ jobId, status: "queued", requestId }, 202);
     }
 
