@@ -13,6 +13,9 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const PalaceBuilder = lazy(() => import('./pages/PalaceBuilder'));
 const PalaceWalkthrough = lazy(() => import('./pages/PalaceWalkthrough'));
 const PalaceList = lazy(() => import('./pages/PalaceList'));
+const Palace3DView = lazy(() => import('./components/palace/Palace3DViewContent'));
+
+// ⚠️ using lazy + Suspense — Three.js/r3f 170kB bundle stays out of main chunk
 const StoryGenerator = lazy(() => import('./pages/StoryGenerator'));
 const StoryList = lazy(() => import('./pages/StoryList'));
 const SymbolForge = lazy(() => import('./pages/SymbolForge'));
@@ -80,6 +83,14 @@ function AnimatedRoutes() {
                 <AppShell>
                   <PalaceBuilder />
                 </AppShell>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/palaces/3d"
+            element={
+              <AuthGuard>
+                <Palace3DView />
               </AuthGuard>
             }
           />
