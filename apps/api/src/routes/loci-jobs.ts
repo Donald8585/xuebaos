@@ -132,47 +132,40 @@ lociJobs.post("/", authMiddleware, async (c) => {
       } as any)
       .where(eq(db.schema.lociJobs.id, jobId));
 
-    // ── Enqueue chunks for processing ─────────────────────────────
-    // Send chunks to queue in batches of 10 to avoid overwhelming the queue
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      const batch = chunks.slice(i, i + BATCH_SIZE);
-      try {
-        await c.env.AI_QUEUE.send(batch.map(chunk => ({
-          type: "process-loci-chunk",
-          userId: internalUserId,
-          payload: {
-            jobId,
-            chunkId: chunk.chunkId,
-            topic,
-          },
-        })));
-      } catch (e) {
-        console.error(`[loci-jobs] Queue send failed for batch starting at chunk ${i}:`, e);
-        // Continue — chunks remain in D1, can be picked up by retry
-      }
-    }
-
-    // ── Process first chunk inline for immediate feedback ──────────
-    // Queue consumer may be slow; this guarantees the first result
-    if (chunks.length > 0) {
-      c.executionCtx.waitUntil((async () => {
+    // ── Process ALL chunks in background (waitUntil) ──────────────
+    // POST returns jobId immediately; SSE stream picks up results
+    // Queue consumer is unreliable; background processing is the real path
+    c.executionCtx.waitUntil((async () => {
+      const { generateLociForChunk } = await import("../services/ai");
+      for (const chunk of chunks) {
         try {
-          const { generateLociForChunk } = await import("../services/ai");
-          const firstChunk = chunks[0];
-          const loci = await generateLociForChunk(c.env, firstChunk.text, topic, firstChunk.sectionTitle);
+          console.log(`[loci-jobs] Processing chunk ${chunk.sequenceIndex}/${chunks.length}`);
+          const loci = await generateLociForChunk(c.env, chunk.text, topic, chunk.sectionTitle);
           await db.update(db.schema.lociChunks)
             .set({ status: "done", loci: JSON.stringify(loci), updatedAt: new Date() } as any)
-            .where(eq(db.schema.lociChunks.id, firstChunk.chunkId));
+            .where(eq(db.schema.lociChunks.id, chunk.chunkId));
           await db.update(db.schema.lociJobs)
             .set({ completedChunks: sql`completed_chunks + 1`, updatedAt: new Date() } as any)
             .where(eq(db.schema.lociJobs.id, jobId));
-          console.log(`[loci-jobs] First chunk ${firstChunk.chunkId} processed inline`);
+          console.log(`[loci-jobs] Chunk ${chunk.sequenceIndex} done`);
         } catch (e) {
-          console.error("[loci-jobs.inline-chunk]", (e as any)?.message);
+          console.error(`[loci-jobs] Chunk ${chunk.sequenceIndex} failed:`, (e as any)?.message);
+          await db.update(db.schema.lociChunks)
+            .set({ status: "failed", error: String((e as any)?.message || "").slice(0, 500), updatedAt: new Date() } as any)
+            .where(eq(db.schema.lociChunks.id, chunk.chunkId));
         }
-      })());
-    }
+      }
+      // Mark job complete
+      const finalJob = await db.query.lociJobs.findFirst({
+        where: (j: any, { eq: any }: any) => eq(j.id, jobId),
+      });
+      if (finalJob && finalJob.completedChunks >= finalJob.totalChunks) {
+        await db.update(db.schema.lociJobs)
+          .set({ status: "completed", updatedAt: new Date() } as any)
+          .where(eq(db.schema.lociJobs.id, jobId));
+        console.log(`[loci-jobs] Job ${jobId} completed`);
+      }
+    })());
 
     console.log(`[loci-jobs] Job ${jobId}: ${chunks.length} chunks enqueued (${plaintext.length} chars, ~${estimatedTokens} tokens)`);
 
@@ -280,10 +273,10 @@ lociJobs.get("/:jobId/stream", authMiddleware, async (c) => {
         status: job.status,
       }));
 
-      // Poll for updates every 2s, max 5 minutes
-      const maxPolls = 150; // 150 × 2s = 5min
+      // Poll for updates every 500ms, max 10 minutes
+      const maxPolls = 1200; // 1200 × 500ms = 10min
       for (let poll = 0; poll < maxPolls; poll++) {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 500));
 
         try {
           const updated = await db.query.lociJobs.findFirst({
