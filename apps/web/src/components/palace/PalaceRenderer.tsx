@@ -2,6 +2,7 @@ import { Suspense, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { RoomMesh } from './RoomMesh';
+import { LocusBillboard } from './LocusBillboard';
 import { PalaceMinimap } from './PalaceMinimap';
 import { Loader2 } from 'lucide-react';
 
@@ -14,8 +15,21 @@ interface RoomData {
   floor_type?: string;
 }
 
+interface PlacedLocus {
+  concept: string;
+  description: string;
+  mnemonic: string;
+  image_url?: string;
+  room_id: string;
+  x: number;
+  y: number;
+  z: number;
+  auto_placed: boolean;
+}
+
 interface Props {
   rooms: RoomData[];
+  loci?: PlacedLocus[];
   mode?: 'orbit' | 'walk';
   selectedRoom?: string;
   onRoomClick?: (roomName: string) => void;
@@ -53,8 +67,9 @@ function FallbackUI() {
   );
 }
 
-export function PalaceRenderer({ rooms, mode = 'orbit', selectedRoom, onRoomClick }: Props) {
+export function PalaceRenderer({ rooms, loci: placedLoci, mode = 'orbit', selectedRoom, onRoomClick }: Props) {
   const placedRooms = useMemo(() => layoutRooms(rooms), [rooms]);
+  const loci = placedLoci || [];
 
   if (!rooms?.length) {
     return (
@@ -86,15 +101,25 @@ export function PalaceRenderer({ rooms, mode = 'orbit', selectedRoom, onRoomClic
 
           {/* Rooms */}
           {placedRooms.map((room, i) => (
-            <RoomMesh
-              key={i}
-              room={room}
-              position={[room.x, 0, room.z]}
-              wallHeight={WALL_HEIGHT}
-              scale={GRID_SCALE}
-              selected={room.name === selectedRoom}
-              onClick={() => onRoomClick?.(room.name)}
-            />
+            <group key={i}>
+              <RoomMesh
+                room={room}
+                position={[room.x, 0, room.z]}
+                wallHeight={WALL_HEIGHT}
+                scale={GRID_SCALE}
+                selected={room.name === selectedRoom}
+                onClick={() => onRoomClick?.(room.name)}
+              />
+              {/* Loci placed in this room */}
+              {loci.filter((l: any) => l.room_id === room.name).map((locus: any, j: number) => (
+                <LocusBillboard
+                  key={j}
+                  locus={locus}
+                  roomWidth={room.width_m * GRID_SCALE}
+                  roomDepth={room.height_m * GRID_SCALE}
+                />
+              ))}
+            </group>
           ))}
 
           {/* Controls */}
