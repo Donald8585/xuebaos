@@ -142,8 +142,9 @@ export default function Dashboard() {
   const { data: timetable } = useTimetable();
   const navigate = useNavigate();
 
-  const todayTimetable = timetable?.filter(
-    (e) => e.day_of_week === new Date().getDay()
+  const todayEntries: any[] = Array.isArray(timetable) ? timetable : (timetable as any)?.data || [];
+  const todayTimetable = todayEntries.filter(
+    (e: any) => e.day_of_week === new Date().getDay()
   );
 
   // Deterministic daily principle
@@ -462,7 +463,7 @@ export default function Dashboard() {
             <CardContent>
               {todayTimetable && todayTimetable.length > 0 ? (
                 <div className="space-y-2">
-                  {todayTimetable.map((entry) => (
+                  {todayTimetable.map((entry: any) => (
                     <div
                       key={entry.id}
                       className="flex items-center gap-3 p-2 rounded-lg bg-slate-700/30"
