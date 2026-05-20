@@ -13,6 +13,7 @@ interface RoomData {
   connections: string[];
   notable_features?: string[];
   floor_type?: string;
+  approx_position?: { x: number; z: number };
 }
 
 interface PlacedLocus {
@@ -39,7 +40,16 @@ const WALL_HEIGHT = 2.5;
 const GRID_SCALE = 1.0; // 1 unit = 1 meter
 
 function layoutRooms(rooms: RoomData[]): Array<RoomData & { x: number; z: number }> {
-  // Simple grid layout: place rooms in a row, branching by connections
+  // If ALL rooms have approx_position, use that for a 2D layout
+  if (rooms.every(r => r.approx_position)) {
+    return rooms.map(r => ({
+      ...r,
+      x: (r.approx_position!.x || 0.5) * 15,  // 0-1 → 0-15m grid
+      z: (r.approx_position!.z || 0.5) * 10,  // 0-1 → 0-10m grid
+    }));
+  }
+
+  // Fall back to horizontal strip layout
   const placed: Array<RoomData & { x: number; z: number }> = [];
   let x = 0;
   let z = 0;
@@ -48,14 +58,11 @@ function layoutRooms(rooms: RoomData[]): Array<RoomData & { x: number; z: number
   for (const room of rooms) {
     const w = room.width_m * GRID_SCALE;
     const d = room.height_m * GRID_SCALE;
-
     placed.push({ ...room, x, z });
-    x += w + 1; // 1m gap between rooms
+    x += w + 1;
     maxWidthInRow = Math.max(maxWidthInRow, d);
-
-    if (x > 20) { x = 0; z += maxWidthInRow + 1; maxWidthInRow = 0; } // new row
+    if (x > 20) { x = 0; z += maxWidthInRow + 1; maxWidthInRow = 0; }
   }
-
   return placed;
 }
 

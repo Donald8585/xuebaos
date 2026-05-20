@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import toast from 'react-hot-toast';
+import { sampleFrames } from '@/lib/frame-sampler';
 
 interface RoomData {
   name: string;
@@ -29,9 +30,8 @@ interface Props {
   onCancel: () => void;
 }
 
-const FRAME_COUNT = 8;
+const TARGET_FRAMES = 16;
 const MAX_VIDEO_SECONDS = 90;
-const FRAME_INTERVAL = MAX_VIDEO_SECONDS / FRAME_COUNT; // ~11s between frames
 
 export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
   const { getToken } = useAuth();
@@ -43,7 +43,7 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [frames, setFrames] = useState<string[]>([]);
-  const [progress, setProgress] = useState({ current: 0, total: FRAME_COUNT });
+  const [progress, setProgress] = useState({ current: 0, total: TARGET_FRAMES });
   const [result, setResult] = useState<FloorPlanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [consented, setConsented] = useState(false);
@@ -65,35 +65,29 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
   const captureFrames = useCallback(async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || !canvas) return [];
 
     setStage('extracting');
-    setProgress({ current: 0, total: FRAME_COUNT });
+    setProgress({ current: 0, total: TARGET_FRAMES });
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const duration = Math.min(video.duration, MAX_VIDEO_SECONDS);
-    const interval = duration / FRAME_COUNT;
-    const capturedFrames: string[] = [];
-
-    for (let i = 0; i < FRAME_COUNT; i++) {
-      video.currentTime = Math.min(i * interval, duration - 0.1);
-      await new Promise<void>((resolve) => {
-        video.onseeked = () => {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          ctx.drawImage(video, 0, 0, 640, 480); // Resize to 640x480
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          capturedFrames.push(dataUrl);
-          setProgress({ current: i + 1, total: FRAME_COUNT });
-          resolve();
-        };
+    try {
+      const result = await sampleFrames({
+        canvas,
+        video,
+        targetFrames: TARGET_FRAMES,
+        minQuality: 0.12,
+        sceneChangeThreshold: 0.10,
       });
-    }
 
-    setFrames(capturedFrames);
-    return capturedFrames;
+      const dataUrls = result.map(f => f.dataUrl);
+      setFrames(dataUrls);
+      setProgress({ current: dataUrls.length, total: TARGET_FRAMES });
+      console.log(`[HomeScanCapture] Sampled ${dataUrls.length} frames (${result.filter(f => f.isSceneChange).length} scene changes)`);
+      return dataUrls;
+    } catch (e) {
+      console.error('[HomeScanCapture] Frame sampling failed:', e);
+      return [];
+    }
   }, []);
 
   const submitForExtraction = useCallback(async (capturedFrames: string[]) => {

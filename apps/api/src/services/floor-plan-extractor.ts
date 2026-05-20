@@ -1,24 +1,27 @@
 /**
- * Floor plan extractor v2 — multi-strategy with Replicate DUSt3R primary.
+ * Floor plan extractor v3 — multi-strategy + upgraded prompt + model config.
  *
  * Strategies (tried in order):
- *   1. dust3r_replicate — DUSt3R point cloud via Replicate API (webhook-based async)
- *   2. gpt4o_vision      — GPT-4o-mini vision LLM (synchronous, ~5s)
+ *   1. dust3r_replicate — DUSt3R via Replicate (webhook-ready, 90s timeout)
+ *   2. gpt4o_vision      — Multi-step vision LLM (inventory→layout→JSON)
+ *   3. fallback_basic     — Placeholder room schema when no APIs available
  *
- * Config via env vars:
- *   DUST3R_MODEL=owner/model:version  (default: camenduru/dust3r)
- *   FLOOR_PLAN_STRATEGY=dust3r_replicate|gpt4o_vision|auto
+ * Config via env vars / secrets:
+ *   VISION_MODEL=gpt-4o-mini|gpt-4o|gemini-2.5-pro|claude-sonnet-4.5
+ *   DUST3R_MODEL=owner/model:version
+ *   FLOOR_PLAN_STRATEGY=auto|dust3r_replicate|gpt4o_vision
+ *   OPENAI_BASE_URL=custom proxy URL (default: api.openai.com)
  */
 
 import type { Env } from "../index";
-
-// ── Types ──────────────────────────────────────────────────────────
 
 interface RoomData {
   name: string;
   width_m: number;
   height_m: number;
   connections: string[];
+  approx_position?: { x: number; z: number };
+  evidence_frame_indices?: number[];
   notable_features?: string[];
   floor_type?: string;
 }
@@ -27,224 +30,125 @@ interface FloorPlanSchema {
   rooms: RoomData[];
   total_area_m2?: number;
   floor_count?: number;
+  layout_topology?: string;
+  ambiguities?: string[];
   strategy_used?: string;
   dust3r_prediction_id?: string;
+  _fallback_errors?: string[];
 }
 
-interface ReplicatePrediction {
-  id: string;
-  status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
-  output?: any;
-  error?: string;
-  logs?: string;
-}
-
-const MAX_FRAMES = 8;
+const MAX_FRAMES = 16;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const REPLICATE_POLL_TIMEOUT_MS = 90_000;
 const REPLICATE_POLL_INTERVAL_MS = 2_000;
-const CACHE_TTL_MS = 3600_000; // 1h cache for identical inputs
+const CACHE_TTL_MS = 3600_000;
 
-// ── Simple in-memory cache for re-runs ───────────────────────────
 const resultCache = new Map<string, { schema: FloorPlanSchema; ts: number }>();
-
 function cacheKey(frames: string[]): string {
-  // Hash first 100 chars of first + last frame for cache identity
   const f0 = frames[0]?.slice(0, 100) || "";
   const fn = frames[frames.length - 1]?.slice(-100) || "";
   return `${f0}|${fn}|${frames.length}`;
 }
-
 function cacheGet(key: string): FloorPlanSchema | null {
   const entry = resultCache.get(key);
   if (entry && Date.now() - entry.ts < CACHE_TTL_MS) return entry.schema;
   if (entry) resultCache.delete(key);
   return null;
 }
-
 function cacheSet(key: string, schema: FloorPlanSchema): void {
   resultCache.set(key, { schema, ts: Date.now() });
 }
 
-// ── DUSt3R via Replicate ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Vision LLM Strategy (upgraded multi-step prompt)
+// ══════════════════════════════════════════════════════════════════
 
-const DUST3R_PROMPT = `Analyze this home interior point cloud/depth and produce a floor plan JSON:
-{ "rooms": [{ "name": "Living Room", "width_m": 4.5, "height_m": 5.0, "connections": ["Kitchen", "Hallway"], "notable_features": ["red sofa", "TV unit"], "floor_type": "hardwood" }] }`;
+const FLOOR_PLAN_SYSTEM_PROMPT = `You are an expert architectural space analyzer. Given frames from a home walkthrough video, produce an accurate JSON floor plan.
 
-async function extractWithDUSt3R(
+## STEP 1 — Room Inventory
+List EVERY distinct room visible across ALL frames. Look for:
+- Doorways, archways, and openings that separate spaces
+- Changes in flooring (hardwood→tile, carpet→tile)
+- Different wall colors, furniture styles, or lighting fixtures
+- Window positions and sizes (different windows = different room)
+- **CRITICAL**: If you see what looks like a bedroom at two different points in the walkthrough, they are SEPARATE bedrooms. Homes typically have 1-3 bedrooms. Count them.
+- Treat similar-looking rooms as separate if they appear at different walkthrough points.
+
+## STEP 2 — Layout Reasoning
+Determine how rooms connect:
+- Which room does the entrance lead to?
+- What rooms connect through doorways/archways?
+- Is the layout linear, L-shaped, or centered around a hallway?
+- For each room, estimate approx_position { x: 0-1, z: 0-1 } in normalized 2D space (0,0 = top-left, 1,1 = bottom-right). Front-to-back = increasing z. Left-to-right = increasing x.
+- DO NOT lay out rooms in a flat horizontal strip. Use 2D placement based on observed spatial relationships.
+
+## STEP 3 — Final JSON
+Return ONLY valid JSON:
+{
+  "rooms": [{
+    "name": "Living Room",
+    "width_m": 4.5,
+    "height_m": 5.0,
+    "connections": ["Kitchen", "Hallway"],
+    "approx_position": { "x": 0.5, "z": 0.3 },
+    "evidence_frame_indices": [0, 2],
+    "notable_features": ["red sofa", "TV unit"],
+    "floor_type": "hardwood"
+  }],
+  "layout_topology": "L-shaped",
+  "ambiguities": ["Could not determine if room 4 is a bathroom or closet"]
+}
+
+## EXAMPLE 1: Linear 1BR apartment
+{"rooms":[{"name":"Entryway","width_m":1.5,"height_m":2.0,"connections":["Living Room"],"approx_position":{"x":0.5,"z":0.05},"evidence_frame_indices":[0],"floor_type":"tile"},{"name":"Living Room","width_m":4.0,"height_m":5.0,"connections":["Entryway","Kitchen","Hallway"],"approx_position":{"x":0.5,"z":0.3},"evidence_frame_indices":[1,2],"notable_features":["gray sofa","coffee table"],"floor_type":"hardwood"},{"name":"Kitchen","width_m":2.5,"height_m":3.0,"connections":["Living Room"],"approx_position":{"x":0.1,"z":0.3},"evidence_frame_indices":[2],"notable_features":["white cabinets"],"floor_type":"tile"},{"name":"Hallway","width_m":1.0,"height_m":3.0,"connections":["Living Room","Bedroom","Bathroom"],"approx_position":{"x":0.5,"z":0.6},"evidence_frame_indices":[3,4],"floor_type":"hardwood"},{"name":"Bedroom","width_m":3.5,"height_m":4.0,"connections":["Hallway"],"approx_position":{"x":0.5,"z":0.85},"evidence_frame_indices":[5,6],"notable_features":["queen bed","wardrobe"],"floor_type":"carpet"},{"name":"Bathroom","width_m":2.0,"height_m":2.5,"connections":["Hallway"],"approx_position":{"x":0.2,"z":0.7},"evidence_frame_indices":[7],"floor_type":"tile"}],"layout_topology":"linear","ambiguities":[]}
+
+## EXAMPLE 2: L-shaped 2BR apartment
+{"rooms":[{"name":"Entryway","width_m":2.0,"height_m":2.0,"connections":["Living Room"],"approx_position":{"x":0.5,"z":0.05}},{"name":"Living Room","width_m":5.0,"height_m":5.0,"connections":["Entryway","Kitchen","Hallway"],"approx_position":{"x":0.4,"z":0.3}},{"name":"Kitchen","width_m":3.0,"height_m":3.0,"connections":["Living Room"],"approx_position":{"x":0.15,"z":0.2}},{"name":"Hallway","width_m":1.2,"height_m":3.5,"connections":["Living Room","Bedroom 1","Bedroom 2","Bathroom"],"approx_position":{"x":0.7,"z":0.5}},{"name":"Bedroom 1","width_m":3.5,"height_m":3.5,"connections":["Hallway"],"approx_position":{"x":0.7,"z":0.8}},{"name":"Bedroom 2","width_m":3.0,"height_m":3.0,"connections":["Hallway"],"approx_position":{"x":0.9,"z":0.6}},{"name":"Bathroom","width_m":2.0,"height_m":2.5,"connections":["Hallway"],"approx_position":{"x":0.5,"z":0.7}}],"layout_topology":"L-shaped","ambiguities":[]}
+
+## RULES
+- Every room must connect to at least one other room. Connections must form a traversable graph.
+- approx_position must form a plausible 2D layout (no overlapping rooms, walkable).
+- Default dimensions: 3.5m × 3.5m if uncertain.
+- Indicate ambiguity rather than guessing.
+- DO NOT merge similar rooms seen at different walkthrough points.
+- DO NOT lay out rooms in a flat horizontal strip. Use 2D placement.`;
+
+async function extractWithVisionLLM(
   env: Env,
   frames: string[]
 ): Promise<FloorPlanSchema> {
-  if (!env.REPLICATE_API_TOKEN) {
-    throw new Error("REPLICATE_API_TOKEN not configured");
-  }
-
-  const dust3rModel = (env as any).DUST3R_MODEL || env.LLM_PRIMARY_MODEL || "camenduru/dust3r";
-  console.log(`[floor-plan.dust3r] Trying model: ${dust3rModel} with ${frames.length} frames`);
-
-  // Submit prediction
-  const submitResp = await fetch("https://api.replicate.com/v1/predictions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Token ${env.REPLICATE_API_TOKEN}`,
-    },
-    body: JSON.stringify({
-      version: dust3rModel,
-      input: {
-        images: frames.slice(0, 2), // DUSt3R works best with 2 images (stereo pair)
-        prompt: DUST3R_PROMPT,
-      },
-      webhook_completed: null, // No webhook URL configured yet; use polling
-    }),
-  });
-
-  if (!submitResp.ok) {
-    const err = await submitResp.text().catch(() => "");
-    const isModelNotFound = submitResp.status === 404 || err.includes("not found") || err.includes("does not exist");
-    if (isModelNotFound) {
-      throw new Error(`DUST3R_MODEL_NOT_FOUND:${dust3rModel}`);
-    }
-    throw new Error(`Replicate API error (${submitResp.status}): ${err.slice(0, 300)}`);
-  }
-
-  const prediction: ReplicatePrediction = await submitResp.json();
-  const predictionId = prediction.id;
-  console.log(`[floor-plan.dust3r] Prediction ${predictionId} submitted`);
-
-  // Poll for completion (max 90s)
-  const startedAt = Date.now();
-  let pollCount = 0;
-
-  while (Date.now() - startedAt < REPLICATE_POLL_TIMEOUT_MS) {
-    await new Promise(r => setTimeout(r, REPLICATE_POLL_INTERVAL_MS));
-    pollCount++;
-
-    const pollResp = await fetch(
-      `https://api.replicate.com/v1/predictions/${predictionId}`,
-      { headers: { Authorization: `Token ${env.REPLICATE_API_TOKEN}` } }
-    );
-
-    if (!pollResp.ok) {
-      console.error(`[floor-plan.dust3r] Poll ${pollCount} failed: HTTP ${pollResp.status}`);
-      continue;
-    }
-
-    const result: ReplicatePrediction = await pollResp.json();
-
-    if (result.status === "succeeded") {
-      console.log(`[floor-plan.dust3r] Prediction ${predictionId} succeeded after ${pollCount} polls (${Date.now() - startedAt}ms)`);
-      return postProcessDUSt3ROutput(result.output, predictionId);
-    }
-
-    if (result.status === "failed") {
-      throw new Error(`DUSt3R prediction failed: ${result.error || "unknown error"}`);
-    }
-
-    if (result.status === "canceled") {
-      throw new Error("DUSt3R prediction canceled");
-    }
-  }
-
-  throw new Error(`REPLICATE_TIMEOUT: DUSt3R prediction ${predictionId} timed out after ${REPLICATE_POLL_TIMEOUT_MS}ms`);
-}
-
-function postProcessDUSt3ROutput(output: any, predictionId: string): FloorPlanSchema {
-  // DUSt3R output: typically { points: [...], colors: [...], ... }
-  // Post-processing: top-down projection → room segmentation → dimensions
-  // For MVP: extract whatever room info we can; LLM fallback handles the rest
-
-  // If output already contains room info (some models do)
-  if (output?.rooms && Array.isArray(output.rooms)) {
-    return {
-      rooms: output.rooms,
-      strategy_used: "dust3r_replicate",
-      dust3r_prediction_id: predictionId,
-    };
-  }
-
-  // Minimal post-processing: convert point cloud to approximate dimensions
-  if (output?.points && Array.isArray(output.points)) {
-    const points = output.points;
-    const xs = points.map((p: number[]) => p[0]);
-    const ys = points.map((p: number[]) => p[1]);
-    const zs = points.map((p: number[]) => p[2]);
-
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minZ = Math.min(...zs), maxZ = Math.max(...zs);
-
-    const width = Math.round((maxX - minX) * 100) / 100;
-    const depth = Math.round((maxZ - minZ) * 100) / 100;
-
-    if (width > 0 && depth > 0 && width < 50 && depth < 50) {
-      return {
-        rooms: [{
-          name: "Main Room",
-          width_m: width,
-          height_m: depth,
-          connections: [],
-          notable_features: ["From 3D scan"],
-          floor_type: "unknown",
-        }],
-        total_area_m2: Math.round(width * depth * 100) / 100,
-        strategy_used: "dust3r_replicate",
-        dust3r_prediction_id: predictionId,
-      };
-    }
-  }
-
-  // DUSt3R produced output we can't parse — let vision LLM handle it
-  throw new Error("DUSt3R output not parseable as room schema — falling back to vision LLM");
-}
-
-// ── GPT-4o-mini Vision (existing, synchronous) ────────────────────
-
-const VISION_MODEL = "gpt-4o-mini";
-
-const FLOOR_PLAN_SYSTEM_PROMPT = `You are an architectural space analyzer. Given 1-8 images of a home interior, produce a JSON floor plan.
-
-For EACH room:
-- name: short label ("Living Room", "Kitchen", "Bedroom 1", "Hallway", "Bathroom")
-- width_m: approximate width in meters (estimate from proportions, be conservative)
-- height_m: approximate length in meters
-- connections: list of room names this room connects to
-- notable_features: list of distinct visual features ("red sofa", "marble counter")
-- floor_type: "hardwood", "tile", "carpet", or "other"
-
-Rules:
-- Count each room ONCE across all frames.
-- Use 3.0m × 3.0m as default if uncertain.
-- Connections must form a traversable graph.
-- Return ONLY: { "rooms": [...] }`;
-
-async function extractWithGPT4oVision(
-  env: Env,
-  frames: string[]
-): Promise<FloorPlanSchema> {
-  if (!env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+  const openaiKey = env.OPENAI_API_KEY;
+  if (!openaiKey) throw new Error("OPENAI_API_KEY not configured");
 
   const validFrames = frames.filter(f => f.startsWith("data:image/") && f.length < MAX_IMAGE_BYTES);
   if (validFrames.length === 0) throw new Error("No valid frames");
+
+  const model = (env as any).VISION_MODEL || "gpt-4o-mini";
+  const openaiBase = (env as any).OPENAI_BASE_URL || "https://api.openai.com";
+
+  console.log(`[floor-plan.vision] Using model ${model} with ${validFrames.length} frames via ${openaiBase}`);
 
   const imageContents = validFrames.map(f => ({
     type: "image_url" as const,
     image_url: { url: f, detail: "low" as const },
   }));
 
-  const openaiBase = (env as any).OPENAI_BASE_URL || "https://api.openai.com";
   const resp = await fetch(`${openaiBase}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${openaiKey}`,
     },
     body: JSON.stringify({
-      model: VISION_MODEL,
+      model,
       messages: [
         { role: "system", content: FLOOR_PLAN_SYSTEM_PROMPT },
-        { role: "user", content: [{ type: "text", text: `Analyze these ${validFrames.length} home walkthrough frames.` }, ...imageContents] },
+        { role: "user", content: [
+          { type: "text", text: `Analyze these ${validFrames.length} frames from a home walkthrough. Follow the 3-step process (inventory→layout→JSON). Pay special attention to bedrooms — if you see what looks like a bedroom at different points, they are SEPARATE rooms.` },
+          ...imageContents,
+        ]},
       ],
-      max_tokens: 2048,
+      max_tokens: 4096,
       temperature: 0.2,
       response_format: { type: "json_object" },
     }),
@@ -261,34 +165,87 @@ async function extractWithGPT4oVision(
 
   try {
     const parsed = JSON.parse(rawContent);
-    return { ...parsed, strategy_used: "gpt4o_vision" } as FloorPlanSchema;
+    return { ...parsed, strategy_used: `gpt4o_vision:${model}` } as FloorPlanSchema;
   } catch {
     const m = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (m) return { ...JSON.parse(m[1]), strategy_used: "gpt4o_vision" } as FloorPlanSchema;
+    if (m) return { ...JSON.parse(m[1]), strategy_used: `gpt4o_vision:${model}` } as FloorPlanSchema;
     throw new Error(`Failed to parse vision LLM JSON: ${rawContent.slice(0, 200)}`);
   }
 }
 
-// ── Main entry point ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// DUSt3R via Replicate (unchanged from v2)
+// ══════════════════════════════════════════════════════════════════
 
-export async function extractFloorPlan(
-  env: Env,
-  frames: string[]
-): Promise<FloorPlanSchema> {
+const DUST3R_PROMPT = `Analyze this home interior point cloud/depth and produce a floor plan JSON:
+{ "rooms": [{ "name": "Living Room", "width_m": 4.5, "height_m": 5.0, "connections": ["Kitchen", "Hallway"], "notable_features": ["red sofa", "TV unit"], "floor_type": "hardwood" }] }`;
+
+interface ReplicatePrediction {
+  id: string;
+  status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+  output?: any;
+  error?: string;
+}
+
+async function extractWithDUSt3R(env: Env, frames: string[]): Promise<FloorPlanSchema> {
+  if (!env.REPLICATE_API_TOKEN) throw new Error("REPLICATE_API_TOKEN not configured");
+  const model = (env as any).DUST3R_MODEL || "camenduru/dust3r";
+  console.log(`[floor-plan.dust3r] Model: ${model}, ${frames.length} frames`);
+
+  const submitResp = await fetch("https://api.replicate.com/v1/predictions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Token ${env.REPLICATE_API_TOKEN}` },
+    body: JSON.stringify({ version: model, input: { images: frames.slice(0, 2), prompt: DUST3R_PROMPT } }),
+  });
+
+  if (!submitResp.ok) {
+    const err = await submitResp.text().catch(() => "");
+    throw new Error(submitResp.status === 404 || err.includes("not found") ? `DUST3R_MODEL_NOT_FOUND:${model}` : `Replicate (${submitResp.status}): ${err.slice(0, 200)}`);
+  }
+
+  const prediction: ReplicatePrediction = await submitResp.json();
+  console.log(`[floor-plan.dust3r] Prediction ${prediction.id} submitted`);
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < REPLICATE_POLL_TIMEOUT_MS) {
+    await new Promise(r => setTimeout(r, REPLICATE_POLL_INTERVAL_MS));
+    const pollResp = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+      headers: { Authorization: `Token ${env.REPLICATE_API_TOKEN}` },
+    });
+    if (!pollResp.ok) continue;
+    const result: ReplicatePrediction = await pollResp.json();
+    if (result.status === "succeeded") return postProcessDUSt3R(result.output, prediction.id);
+    if (result.status === "failed") throw new Error(`DUSt3R failed: ${result.error || "unknown"}`);
+    if (result.status === "canceled") throw new Error("DUSt3R canceled");
+  }
+  throw new Error(`REPLICATE_TIMEOUT: ${prediction.id} after ${REPLICATE_POLL_TIMEOUT_MS}ms`);
+}
+
+function postProcessDUSt3R(output: any, predictionId: string): FloorPlanSchema {
+  if (output?.rooms?.length) return { rooms: output.rooms, strategy_used: "dust3r_replicate", dust3r_prediction_id: predictionId };
+  if (output?.points?.length) {
+    const xs = output.points.map((p: number[]) => p[0]), zs = output.points.map((p: number[]) => p[2]);
+    const w = Math.round((Math.max(...xs) - Math.min(...xs)) * 100) / 100;
+    const d = Math.round((Math.max(...zs) - Math.min(...zs)) * 100) / 100;
+    if (w > 0 && d > 0 && w < 50) return { rooms: [{ name: "Main Room", width_m: w, height_m: d, connections: [], floor_type: "unknown" }], strategy_used: "dust3r_replicate", dust3r_prediction_id: predictionId };
+  }
+  throw new Error("DUSt3R output unparseable — falling back");
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Main entry point
+// ══════════════════════════════════════════════════════════════════
+
+export async function extractFloorPlan(env: Env, frames: string[]): Promise<FloorPlanSchema> {
   if (frames.length === 0) throw new Error("At least 1 frame required");
 
-  // Check cache for re-runs
   const key = cacheKey(frames);
   const cached = cacheGet(key);
-  if (cached) {
-    console.log("[floor-plan] Cache hit — returning cached result");
-    return cached;
-  }
+  if (cached) { console.log("[floor-plan] Cache hit"); return cached; }
 
   const strategy = (env as any).FLOOR_PLAN_STRATEGY || "auto";
   const errors: string[] = [];
 
-  // Strategy 1: DUSt3R via Replicate (if configured)
   if (strategy === "dust3r_replicate" || strategy === "auto") {
     try {
       const result = await extractWithDUSt3R(env, frames);
@@ -296,42 +253,38 @@ export async function extractFloorPlan(
       return result;
     } catch (e: any) {
       const msg = String(e?.message || "");
-      console.warn(`[floor-plan] DUSt3R strategy failed: ${msg.slice(0, 200)}`);
+      console.warn(`[floor-plan] DUSt3R failed: ${msg.slice(0, 200)}`);
       errors.push(`dust3r: ${msg.slice(0, 100)}`);
-
-      // If model not found and strategy is explicit → don't fallback
       if (msg.includes("DUST3R_MODEL_NOT_FOUND") && strategy === "dust3r_replicate") {
-        throw new Error(`DUSt3R model not available on Replicate. Set DUST3R_MODEL env var or use strategy=gpt4o_vision. Original: ${msg}`);
+        throw new Error(`DUSt3R model not available. Set DUST3R_MODEL env var or use strategy=gpt4o_vision.`);
       }
     }
   }
 
-  // Strategy 2: GPT-4o-mini vision (fallback or explicit)
   if (strategy === "gpt4o_vision" || strategy === "auto") {
     try {
-      const result = await extractWithGPT4oVision(env, frames);
+      const result = await extractWithVisionLLM(env, frames);
       (result as any)._fallback_errors = errors.length ? errors : undefined;
       cacheSet(key, result);
       return result;
     } catch (e: any) {
-      errors.push(`gpt4o: ${String(e?.message || "").slice(0, 100)}`);
+      errors.push(`vision: ${String(e?.message || "").slice(0, 100)}`);
     }
   }
 
-  // Strategy 2: No-API fallback — basic room from frame count
-  // User can manually edit rooms in the 3D view
-  console.warn(`[floor-plan] No API keys configured — using basic room schema. Errors: ${errors.join("; ")}`);
-  const basicRooms: RoomData[] = [
-    { name: "Living Room", width_m: 5.0, height_m: 4.0, connections: ["Kitchen"], floor_type: "hardwood" },
-    { name: "Kitchen", width_m: 3.5, height_m: 3.0, connections: ["Living Room", "Hallway"], floor_type: "tile" },
-    { name: "Hallway", width_m: 1.5, height_m: 3.0, connections: ["Kitchen", "Bedroom"], floor_type: "hardwood" },
-    { name: "Bedroom", width_m: 4.0, height_m: 3.5, connections: ["Hallway"], floor_type: "carpet" },
-  ];
-
-  const fallbackSchema: FloorPlanSchema = {
-    rooms: basicRooms,
+  // Graceful fallback
+  console.warn(`[floor-plan] All strategies failed, using basic schema. Errors: ${errors.join("; ")}`);
+  const fallback: FloorPlanSchema = {
+    rooms: [
+      { name: "Living Room", width_m: 5.0, height_m: 4.0, connections: ["Kitchen"], approx_position: { x: 0.4, z: 0.3 }, floor_type: "hardwood" },
+      { name: "Kitchen", width_m: 3.5, height_m: 3.0, connections: ["Living Room", "Hallway"], approx_position: { x: 0.15, z: 0.2 }, floor_type: "tile" },
+      { name: "Hallway", width_m: 1.5, height_m: 3.0, connections: ["Kitchen", "Bedroom 1", "Bathroom"], approx_position: { x: 0.6, z: 0.5 }, floor_type: "hardwood" },
+      { name: "Bedroom 1", width_m: 4.0, height_m: 3.5, connections: ["Hallway"], approx_position: { x: 0.7, z: 0.8 }, floor_type: "carpet" },
+      { name: "Bathroom", width_m: 2.0, height_m: 2.5, connections: ["Hallway"], approx_position: { x: 0.4, z: 0.7 }, floor_type: "tile" },
+    ],
+    layout_topology: "L-shaped",
     strategy_used: "fallback_basic",
   };
-  cacheSet(key, fallbackSchema);
-  return fallbackSchema;
+  cacheSet(key, fallback);
+  return fallback;
 }
