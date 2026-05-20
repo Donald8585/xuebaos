@@ -57,6 +57,8 @@ export interface Env {
   DEEPSEEK_API_KEY: string;
   REPLICATE_API_TOKEN: string;
   OPENAI_API_KEY: string;
+  LLM_PRIMARY_MODEL?: string;    // defaults to "deepseek-chat"
+  LLM_FALLBACK_MODEL?: string;   // defaults to "gpt-4o-mini"
   ELEVENLABS_API_KEY?: string;
   APP_NAME: string;
   ENVIRONMENT: string;

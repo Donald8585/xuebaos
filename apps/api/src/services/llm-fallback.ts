@@ -31,7 +31,7 @@ function getProviders(env: Env): ProviderConfig[] {
       name: "deepseek",
       baseUrl: DEEPSEEK_BASE,
       apiKey: env.DEEPSEEK_API_KEY,
-      model: "deepseek-chat",
+      model: env.LLM_PRIMARY_MODEL || "deepseek-chat",
     });
   }
 
@@ -40,7 +40,7 @@ function getProviders(env: Env): ProviderConfig[] {
       name: "openai",
       baseUrl: OPENAI_BASE,
       apiKey: env.OPENAI_API_KEY,
-      model: "gpt-4o-mini",
+      model: env.LLM_FALLBACK_MODEL || "gpt-4o-mini",
     });
   }
 
