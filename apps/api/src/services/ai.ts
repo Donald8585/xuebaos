@@ -389,7 +389,7 @@ export async function generateLociForChunk(
 
 ${contextInfo}
 Text:
-${chunkText.slice(0, 6000)}`;
+${chunkText.slice(0, 12000)}`;
 
   const result = await chatWithFallback(env, [
     { role: "user", content: prompt },

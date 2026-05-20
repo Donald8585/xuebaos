@@ -165,13 +165,21 @@ lociJobs.post("/", authMiddleware, async (c) => {
     }, 202);
 
   } catch (e: any) {
+    const msg = String(e?.message ?? "");
+    const code = msg.includes("parse") || msg.includes("JSON") ? "PARSE_FAILED"
+      : msg.includes("chunk") || msg.includes("empty") ? "CHUNKING_FAILED"
+      : msg.includes("queue") ? "QUEUE_FAILED"
+      : msg.includes("timeout") || msg.includes("abort") ? "API_TIMEOUT"
+      : msg.includes("cap") || msg.includes("cost") ? "COST_CAP_HIT"
+      : "JOB_CREATION_FAILED";
+
     console.error("[loci-jobs.create.fail]", JSON.stringify({
-      requestId,
-      msg: String(e?.message ?? "").slice(0, 300),
+      requestId, code, msg: msg.slice(0, 300),
     }));
     return c.json({
       error: "job_creation_failed",
-      detail: String(e?.message ?? "").slice(0, 200),
+      code,
+      detail: msg.slice(0, 200),
       requestId,
     }, 500);
   }
@@ -425,6 +433,61 @@ lociJobs.post("/:jobId/retry-chunks", authMiddleware, async (c) => {
   }
 
   return c.json({ retried: failedChunks.length });
+});
+
+// ════════════════════════════════════════════════════════════════
+// GET /api/loci-jobs/:jobId/debug — Full job state for support
+// ════════════════════════════════════════════════════════════════
+lociJobs.get("/:jobId/debug", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+
+  const job = await db.query.lociJobs.findFirst({
+    where: (j: any, { eq: any }: any) => eq(j.id, jobId),
+  });
+  if (!job) return c.json({ error: "not_found" }, 404);
+
+  const chunks = await db.select()
+    .from(db.schema.lociChunks)
+    .where(eq(db.schema.lociChunks.jobId, jobId))
+    .orderBy(db.schema.lociChunks.sequenceIndex)
+    .all();
+
+  const chunkSummary = chunks.map(c => ({
+    sequenceIndex: c.sequenceIndex,
+    status: c.status,
+    tokenCount: c.tokenCount,
+    retryCount: c.retryCount,
+    error: c.error?.slice(0, 100),
+    lociCount: c.loci ? (() => { try { return JSON.parse(c.loci).length } catch { return 0 } })() : 0,
+    sectionTitle: c.sectionTitle,
+  }));
+
+  return c.json({
+    job: {
+      id: job.id,
+      userId: job.userId,
+      status: job.status,
+      fileName: job.fileName,
+      fileSize: job.fileSize,
+      topic: job.topic,
+      totalChunks: job.totalChunks,
+      completedChunks: job.completedChunks,
+      error: job.error,
+      plaintextLength: job.plaintextLength,
+      estimatedTokens: job.estimatedTokens,
+      costHkd: job.costHkd,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    },
+    chunks: chunkSummary,
+    statusCounts: {
+      pending: chunkSummary.filter(c => c.status === "pending").length,
+      processing: chunkSummary.filter(c => c.status === "processing").length,
+      done: chunkSummary.filter(c => c.status === "done").length,
+      failed: chunkSummary.filter(c => c.status === "failed").length,
+    },
+  });
 });
 
 export default lociJobs;

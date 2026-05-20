@@ -100,7 +100,8 @@ export default function PalaceBuilder() {
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `HTTP ${resp.status}`);
+        const code = err.code ? ` [${err.code}]` : "";
+        throw new Error(err.detail || err.error || `HTTP ${resp.status}${code}`);
       }
 
       const { jobId, totalChunks } = await resp.json();
