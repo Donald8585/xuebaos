@@ -61,7 +61,6 @@ export interface Env {
   FLOOR_PLAN_STRATEGY?: string;  // "auto" | "dust3r_replicate" | "gpt4o_vision"
   OPENAI_BASE_URL?: string;      // Custom OpenAI-compatible API base URL
   OPENAI_API_KEY: string;
-  GEMINI_API_KEY?: string;
   LLM_PRIMARY_MODEL?: string;    // defaults to "deepseek-chat"
   LLM_FALLBACK_MODEL?: string;   // defaults to "gpt-4o-mini"
   ELEVENLABS_API_KEY?: string;

@@ -81,27 +81,14 @@ async function extractWithVisionLLM(
   const validFrames = frames.filter(f => f.startsWith("data:image/") && f.length < MAX_IMAGE_BYTES);
   if (validFrames.length === 0) throw new Error("No valid frames");
 
-  // ── Auto-detect: Gemini Flash if key available (2-3x faster for vision) ──
-  const modelPref = (env as any).VISION_MODEL || "auto";
-  const geminiKey = env.GEMINI_API_KEY;
-  const useGemini = modelPref === "gemini-2.0-flash" || (modelPref === "auto" && geminiKey);
-
-  if (useGemini && geminiKey) {
-    console.log(`[floor-plan.vision] Gemini Flash (${validFrames.length} frames)`);
-    const { callGeminiVision } = await import("./vision-adapters/gemini");
-    const result = await callGeminiVision(env, FLOOR_PLAN_SYSTEM_PROMPT, validFrames,
-      `Analyze these ${validFrames.length} frames from a home walkthrough and return the floor plan as JSON.`);
-    return { ...result, strategy_used: "gemini_flash" };
-  }
-
-  // ── GPT-4o-mini via OpenAI-compatible API ──────────────────────
+  // ── Model selection (Gemini Flash via same proxy if configured) ──
+  const modelPref = (env as any).VISION_MODEL || "gpt-4o-mini";
+  const model = modelPref;  // "gpt-4o-mini" or "gemini-2.0-flash" — same proxy, same key
   const openaiKey = env.OPENAI_API_KEY;
   if (!openaiKey) throw new Error("OPENAI_API_KEY not configured");
-
-  const model = (env as any).VISION_MODEL || "gpt-4o-mini";
   const openaiBase = (env as any).OPENAI_BASE_URL || "https://api.openai.com";
 
-  console.log(`[floor-plan.vision] Using ${model} with ${validFrames.length} frames via ${openaiBase}`);
+  console.log(`[floor-plan.vision] ${model} (${validFrames.length} frames via ${openaiBase})`);
 
   const imageContents = validFrames.map(f => ({
     type: "image_url" as const,
