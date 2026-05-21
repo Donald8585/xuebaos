@@ -73,7 +73,9 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
     // ── Extract floor plan directly (5 frames, ~5-10s, fast enough for sync) ──
     try {
       const { extractFloorPlan } = await import("../services/floor-plan-extractor");
-      const schema = await extractFloorPlan(c.env, framesToAnalyze);
+      const schema = await extractFloorPlan(c.env, framesToAnalyze, {
+        forceRefresh: c.req.query("forceRefresh") === "true",
+      });
 
       const roomCount = schema.rooms?.length || 0;
       await db.update(db.schema.floorPlans)

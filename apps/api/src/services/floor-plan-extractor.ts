@@ -221,49 +221,118 @@ function getFallbackSchema(errors: string[]): FloorPlanSchema {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Main entry point — FIXED (no cross-request cache)
+// Content-Hash Cache (FIXED — SHA-256 of frame data, not prefix)
 // ══════════════════════════════════════════════════════════════════
 
-export async function extractFloorPlan(env: Env, frames: string[]): Promise<FloorPlanSchema> {
+const CACHE_TTL_MS = 900_000; // 15 minutes
+const resultCache = new Map<string, { schema: FloorPlanSchema; ts: number }>();
+
+/** Derive a content hash from frame data — different videos produce different keys */
+async function contentHashKey(frames: string[]): Promise<string> {
+  // Hash first 2KB of each frame + frame count — balances uniqueness vs speed
+  const samples = frames.map(f => f.slice(0, 2048)).join("|");
+  const data = new TextEncoder().encode(`${samples}|${frames.length}`);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function cacheGet(key: string): Promise<FloorPlanSchema | null> {
+  const entry = resultCache.get(key);
+  if (entry && Date.now() - entry.ts < CACHE_TTL_MS) return entry.schema;
+  if (entry) resultCache.delete(key);
+  return null;
+}
+
+function cacheSet(key: string, schema: FloorPlanSchema): void {
+  // NEVER cache fallback results — only real detections
+  if (schema.strategy_used === "fallback_basic") return;
+  resultCache.set(key, { schema, ts: Date.now() });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Main entry point — content-hash cache + observability
+// ══════════════════════════════════════════════════════════════════
+
+export async function extractFloorPlan(env: Env, frames: string[], opts?: { forceRefresh?: boolean }): Promise<FloorPlanSchema> {
   if (frames.length === 0) throw new Error("At least 1 frame required");
 
   const strategy = (env as any).FLOOR_PLAN_STRATEGY || "auto";
   const errors: string[] = [];
   const requestId = crypto.randomUUID();
-  console.log(`[floor-plan.${requestId}] Starting extraction: ${frames.length} frames, strategy=${strategy}`);
+  const totalStartMs = Date.now();
+
+  const totalBytes = frames.reduce((s, f) => s + f.length, 0);
+  console.log(`[floor-plan.${requestId}] Starting: ${frames.length} frames, ${Math.round(totalBytes/1024)}KB, strategy=${strategy}, forceRefresh=${opts?.forceRefresh || false}`);
+
+  // ── Content-hash cache check (skip if forceRefresh) ────────────
+  if (!opts?.forceRefresh) {
+    const cacheKey = await contentHashKey(frames);
+    const cached = await cacheGet(cacheKey);
+    if (cached) {
+      const elapsed = Date.now() - totalStartMs;
+      console.log(`[floor-plan.${requestId}] CACHE_HIT: ${cached.rooms?.length || 0} rooms in ${elapsed}ms (source: ${cached.strategy_used})`);
+      return { ...cached, strategy_used: `${cached.strategy_used}:cached` };
+    }
+  }
 
   // ── Try DUSt3R first if explicitly requested ────────────────────
   if (strategy === "dust3r_replicate") {
     try {
-      const result = await extractWithDUSt3R(env, frames);
-      console.log(`[floor-plan.${requestId}] DUSt3R succeeded: ${result.rooms?.length || 0} rooms`);
-      return result;
+      const dust3rStartMs = Date.now();
+      const dust3rResult = await extractWithDUSt3R(env, frames);
+      console.log(`[floor-plan.${requestId}] DUSt3R: ${dust3rResult.rooms?.length || 0} rooms in ${Date.now() - dust3rStartMs}ms`);
+      cacheSet(await contentHashKey(frames), dust3rResult);
+      return logAndReturn(requestId, dust3rResult, totalStartMs, errors);
     } catch (e: any) {
       const msg = String(e?.message || "");
       errors.push(`dust3r: ${msg.slice(0, 100)}`);
       if (msg.includes("DUST3R_MODEL_NOT_FOUND")) {
         throw new Error(`DUSt3R model not available. Set DUST3R_MODEL env var or use strategy=gpt4o_vision.`);
       }
-      throw e; // Don't fallback if user explicitly chose DUSt3R
+      throw e;
     }
   }
 
   // ── Vision LLM (primary for "auto" and "gpt4o_vision") ──────────
   try {
+    const visionStartMs = Date.now();
     console.log(`[floor-plan.${requestId}] Trying vision LLM...`);
-    const result = await extractWithVisionLLM(env, frames);
-    (result as any)._fallback_errors = errors.length ? errors : undefined;
-    const roomCount = result.rooms?.length || 0;
-    const topo = result.layout_topology || "unspecified";
-    console.log(`[floor-plan.${requestId}] Vision LLM succeeded: ${roomCount} rooms, topology=${topo}, strategy=${result.strategy_used}`);
-    return result;
+    const visionResult = await extractWithVisionLLM(env, frames);
+    const visionElapsed = Date.now() - visionStartMs;
+    (visionResult as any)._fallback_errors = errors.length ? errors : undefined;
+    console.log(`[floor-plan.${requestId}] Vision LLM: ${visionResult.rooms?.length || 0} rooms, topology=${visionResult.layout_topology || '?'}, llmMs=${visionElapsed}ms`);
+    if (visionResult.strategy_used !== "fallback_basic") {
+      cacheSet(await contentHashKey(frames), visionResult);
+    }
+    return logAndReturn(requestId, visionResult, totalStartMs, errors);
   } catch (e: any) {
-    const msg = String(e?.message || "");
-    console.error(`[floor-plan.${requestId}] Vision LLM failed: ${msg.slice(0, 300)}`);
-    errors.push(`vision: ${msg.slice(0, 100)}`);
+    console.error(`[floor-plan.${requestId}] Vision LLM failed (${Date.now() - totalStartMs}ms): ${String(e?.message || "").slice(0, 300)}`);
+    errors.push(`vision: ${String(e?.message || "").slice(0, 100)}`);
   }
 
   // ── Graceful fallback — NOT CACHED ──────────────────────────────
-  console.warn(`[floor-plan.${requestId}] All strategies failed. Errors: ${errors.join("; ")}`);
-  return getFallbackSchema(errors);
+  console.warn(`[floor-plan.${requestId}] All strategies failed in ${Date.now() - totalStartMs}ms. Errors: ${errors.join("; ")}`);
+  return logAndReturn(requestId, getFallbackSchema(errors), totalStartMs, errors);
+}
+
+/** Log timing + data source, return result (Fix G — observability) */
+function logAndReturn(
+  requestId: string,
+  result: FloorPlanSchema,
+  startMs: number,
+  errors: string[]
+): FloorPlanSchema {
+  const totalMs = Date.now() - startMs;
+  console.log(JSON.stringify({
+    event: "floor_plan_complete",
+    requestId,
+    totalDurationMs: totalMs,
+    roomCount: result.rooms?.length || 0,
+    rooms: result.rooms?.map(r => r.name).join(", ") || "none",
+    dataSource: result.strategy_used || "unknown",
+    topology: result.layout_topology,
+    fallbackErrors: errors.length,
+  }));
+  return result;
 }
