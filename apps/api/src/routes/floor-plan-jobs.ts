@@ -62,12 +62,13 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
       updatedAt: new Date(),
     } as any);
 
-    // ── Select 3 best frames (first/mid/last) for speed ──────────
-    const framesToAnalyze = [
-      validFrames[0],
-      validFrames[Math.floor(validFrames.length / 2)],
-      validFrames[validFrames.length - 1],
-    ].filter(Boolean);
+    // ── Select 5 key frames for better coverage ────────────────────
+    // Strategy: evenly sample frames to capture full spatial layout
+    const len = validFrames.length;
+    const frameIndices = len <= 5
+      ? [...Array(len).keys()]
+      : [0, Math.floor(len * 0.25), Math.floor(len * 0.5), Math.floor(len * 0.75), len - 1];
+    const framesToAnalyze = frameIndices.map(i => validFrames[i]).filter(Boolean);
 
     // ── Extract floor plan directly (5 frames, ~5-10s, fast enough for sync) ──
     try {
@@ -100,8 +101,13 @@ floorPlanJobs.post("/", authMiddleware, zValidator("json", createSchema), async 
           .where(eq(db.schema.memoryPalaces.id, body.palaceId));
       }
 
-      console.log(`[floor-plan] Job ${jobId}: ${roomCount} rooms`);
-      return c.json({ jobId, status: "ready", roomCount, rooms: schema.rooms, schema, requestId });
+      console.log(`[floor-plan] Job ${jobId}: ${roomCount} rooms (strategy: ${schema.strategy_used || 'unknown'})`);
+      return c.json({
+        jobId, status: "ready", roomCount, rooms: schema.rooms, schema,
+        strategyUsed: schema.strategy_used,
+        fallback: schema.strategy_used === "fallback_basic",
+        requestId,
+      });
 
     } catch (e: any) {
       const errMsg = String(e?.message ?? "").slice(0, 500);

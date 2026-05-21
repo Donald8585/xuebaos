@@ -22,6 +22,8 @@ interface FloorPlanResult {
   rooms: RoomData[];
   status: string;
   error?: string;
+  strategyUsed?: string;
+  fallback?: boolean;
 }
 
 interface Props {
@@ -120,10 +122,12 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
             jobId: data.jobId || '',
             rooms: data.rooms || [],
             status: 'ready',
+            strategyUsed: data.strategyUsed,
+            fallback: data.fallback || false,
           };
           setResult(finalResult);
           setStage('done');
-          console.log(`[HomeScanCapture] Got ${finalResult.rooms.length} rooms in ${Date.now() - startedAt}ms`);
+          console.log(`[HomeScanCapture] Got ${finalResult.rooms.length} rooms (strategy: ${data.strategyUsed || 'unknown'}, fallback: ${data.fallback}) in ${Date.now() - startedAt}ms`);
           onComplete(finalResult);
           return;
         }
@@ -242,10 +246,16 @@ export function HomeScanCapture({ palaceId, onComplete, onCancel }: Props) {
 
             {/* Result display */}
             {result && stage === 'done' && (
-              <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                <p className="text-sm font-medium text-green-400 flex items-center gap-1">
-                  <Check size={16} /> Floor plan extracted — {result.rooms.length} rooms detected
+              <div className={`p-3 rounded-lg border ${result.fallback ? 'bg-amber-500/10 border-amber-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
+                <p className={`text-sm font-medium flex items-center gap-1 ${result.fallback ? 'text-amber-400' : 'text-green-400'}`}>
+                  {result.fallback ? <AlertTriangle size={16} /> : <Check size={16} />}
+                  {result.fallback ? 'Placeholder floor plan' : 'Floor plan extracted'} — {result.rooms.length} rooms detected
                 </p>
+                {result.fallback && (
+                  <p className="text-xs text-amber-400/70 mt-1">
+                    AI analysis failed — showing generic layout. Try better lighting or slower walkthrough.
+                  </p>
+                )}
                 <ul className="mt-2 space-y-1">
                   {result.rooms.map((room, i) => (
                     <li key={i} className="text-xs text-slate-400 flex justify-between">

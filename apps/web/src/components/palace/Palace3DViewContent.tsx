@@ -34,6 +34,8 @@ interface FloorPlanResult {
   jobId: string;
   rooms: RoomData[];
   status: string;
+  strategyUsed?: string;
+  fallback?: boolean;
 }
 
 /** Client-side auto-placement: round-robin rooms, spread along walls */
@@ -90,6 +92,19 @@ export default function Palace3DViewContent() {
   const handleScanComplete = useCallback((result: FloorPlanResult) => {
     setRooms(result.rooms);
     setStep('view');
+
+    // ── Fallback warning ────────────────────────────────────────
+    if (result.fallback) {
+      import('react-hot-toast').then(t => {
+        t.default.error(
+          '⚠️ AI could not analyze your video. Showing placeholder rooms. Try better lighting or slower walkthrough.',
+          { duration: 8000, icon: '🏠' }
+        );
+      });
+    }
+    if (result.strategyUsed) {
+      console.log(`[Palace3D] Floor plan via: ${result.strategyUsed}`);
+    }
   }, []);
 
   const handleSavePalace = async () => {
