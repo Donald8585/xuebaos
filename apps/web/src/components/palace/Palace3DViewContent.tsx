@@ -120,7 +120,7 @@ export default function Palace3DViewContent() {
           subject: 'General',
           lociCount: loci.length,
           loci: loci.map(l => ({ concept: l.concept, description: l.description, mnemonic: l.mnemonic })),
-          spatialMap: rooms.map((r: any, i: number) => ({ id: `room-${i}`, name: r.name, x: r.x || 0, y: r.z || 0, width: r.width_m * 100, height: r.height_m * 100, connections: r.connections })),
+          spatialMap: rooms.map((r: any, i: number) => ({ id: `room-${i}`, name: r.name, x: r.approx_position?.x ?? r.x ?? 0, y: r.approx_position?.z ?? r.z ?? 0, width: r.width_m * 100, height: r.height_m * 100, connections: r.connections })),
         }),
       });
       if (resp.ok) {
