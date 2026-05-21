@@ -164,6 +164,34 @@ lociJobs.post("/", authMiddleware, async (c) => {
           .set({ status: "completed", updatedAt: new Date() } as any)
           .where(eq(db.schema.lociJobs.id, jobId));
         console.log(`[loci-jobs] Job ${jobId} completed`);
+
+        // ── Phase 3: Trigger image generation for all loci ──────────
+        try {
+          const completedChunks = await db.select()
+            .from(db.schema.lociChunks)
+            .where(and(
+              eq(db.schema.lociChunks.jobId, jobId),
+              eq(db.schema.lociChunks.status, "done"),
+            ))
+            .all();
+
+          const allLoci: any[] = [];
+          for (const chunk of completedChunks) {
+            if (chunk.loci) {
+              try { const parsed = JSON.parse(chunk.loci); allLoci.push(...(Array.isArray(parsed) ? parsed : [])); } catch {}
+            }
+          }
+
+          if (allLoci.length > 0) {
+            const { generateImagesForLociJob } = await import("../services/image-generator");
+            const tier = c.get("userTier") || "free";
+            // palaceId will be linked later when user saves the palace
+            await generateImagesForLociJob(c.env, db, jobId, "", allLoci, undefined, tier);
+          }
+        } catch (imgErr: any) {
+          console.error(`[loci-jobs.image-gen] Failed:`, String(imgErr?.message ?? "").slice(0, 200));
+          // Non-fatal — loci still work without images
+        }
       }
     })());
 
@@ -502,6 +530,68 @@ lociJobs.get("/:jobId/debug", authMiddleware, async (c) => {
       failed: chunkSummary.filter(c => c.status === "failed").length,
     },
   });
+});
+
+// ════════════════════════════════════════════════════════════════
+// GET /api/loci-jobs/:jobId/images — Image generation status
+// ════════════════════════════════════════════════════════════════
+lociJobs.get("/:jobId/images", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+
+  const job = await db.query.lociJobs.findFirst({
+    where: (j: any, { eq: any }: any) => eq(j.id, jobId),
+  });
+  if (!job) return c.json({ error: "not_found" }, 404);
+
+  const images = await db.select()
+    .from(db.schema.lociImages)
+    .where(eq(db.schema.lociImages.jobId, jobId))
+    .orderBy(db.schema.lociImages.locusIndex)
+    .all();
+
+  const summary = {
+    total: images.length,
+    pending: images.filter((i: any) => i.status === "pending").length,
+    generating: images.filter((i: any) => i.status === "generating").length,
+    done: images.filter((i: any) => i.status === "done").length,
+    failed: images.filter((i: any) => i.status === "failed").length,
+  };
+
+  return c.json({
+    jobId,
+    jobStatus: job.status,
+    summary,
+    images: images.map((img: any) => ({
+      id: img.id,
+      locusIndex: img.locusIndex,
+      concept: img.concept,
+      roomName: img.roomName,
+      status: img.status,
+      imageUrl: img.imageUrl,
+      error: img.error?.slice(0, 200),
+      generationTimeMs: img.generationTimeMs,
+    })),
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// PUT /api/loci-jobs/:jobId/link-palace — Link images to palace
+// Called after frontend saves the palace, before navigating away.
+// ════════════════════════════════════════════════════════════════
+lociJobs.put("/:jobId/link-palace", authMiddleware, async (c) => {
+  const jobId = c.req.param("jobId")!;
+  const db = c.get("db");
+  const body = await c.req.json().catch(() => ({}));
+  const palaceId = body.palaceId;
+
+  if (!palaceId) return c.json({ error: "palaceId required" }, 400);
+
+  const result = await db.update(db.schema.lociImages)
+    .set({ palaceId, updatedAt: new Date() } as any)
+    .where(eq(db.schema.lociImages.jobId, jobId));
+
+  return c.json({ linked: true, palaceId });
 });
 
 export default lociJobs;

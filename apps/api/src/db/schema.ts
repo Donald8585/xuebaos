@@ -590,6 +590,32 @@ export const lociChunks = sqliteTable("loci_chunks", {
     .default(sql`(unixepoch())`),
 });
 
+// ── Loci Images (Phase 3 — Flux Schnell image generation per locus) ───
+export const lociImages = sqliteTable("loci_images", {
+  id: text("id").primaryKey(),
+  locusIndex: integer("locus_index").notNull(),
+  palaceId: text("palace_id").references(() => memoryPalaces.id),
+  jobId: text("job_id").references(() => lociJobs.id),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  concept: text("concept").notNull(),
+  roomName: text("room_name"),
+  prompt: text("prompt").notNull(),
+  imageUrl: text("image_url"),
+  r2Key: text("r2_key"),
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  generationTimeMs: integer("generation_time_ms"),
+  costCents: real("cost_cents").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ── Floor Plans (video walkthrough → room schema) ─────────────────
 export const floorPlans = sqliteTable("floor_plans", {
   id: text("id").primaryKey(),
@@ -638,6 +664,7 @@ export const TABLES = {
   palaceAnchors,
   lociJobs,
   lociChunks,
+  lociImages,
   floorPlans,
 } as const;
 

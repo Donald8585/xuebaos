@@ -90,6 +90,9 @@ export function trackJobCost(
 // Floor Plan Extraction — per-scan cost + per-tier monthly limits
 // ══════════════════════════════════════════════════════════════════
 
+/** Per-image cost via Flux Schnell (USD cents converted to HKD) */
+export const IMAGE_GEN_COST_HKD = 0.023; // ~$0.003 USD × 7.8
+
 /** Per-strategy cost per scan (HKD) */
 const FLOOR_PLAN_COSTS: Record<string, number> = {
   dust3r_replicate: 0.40,  // ~$0.05 USD × 7.8

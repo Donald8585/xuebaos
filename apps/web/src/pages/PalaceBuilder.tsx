@@ -34,6 +34,8 @@ interface Locus {
   concept: string;
   description: string;
   mnemonic: string;
+  image_url?: string;
+  imageStatus?: 'pending' | 'generating' | 'done' | 'failed';
 }
 
 export default function PalaceBuilder() {
@@ -296,12 +298,57 @@ export default function PalaceBuilder() {
     setStep(3);
     setIsGenerating(false);
     toast.success(`Generated ${mapped.length} memory loci from ${lociProgress.total || '?'} chunks!`);
+
+    // ── Phase 3: Poll for image generation status ────────────────
+    if (jobId) {
+      pollImageStatus(jobId, mapped.length);
+    }
+  };
+
+  /** Poll for image generation progress (Phase 3) */
+  const pollImageStatus = async (jobId: string, expectedCount: number) => {
+    const API_BASE = import.meta.env.VITE_API_URL || '/api';
+    const token = await getToken();
+    if (!token) return;
+
+    const maxPolls = 120; // 2 minutes max
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const resp = await fetch(`${API_BASE}/loci-jobs/${jobId}/images`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await resp.json();
+        if (data.summary) {
+          const { done, failed, pending, generating } = data.summary;
+          // Update loci with image URLs as they arrive
+          setLoci(prev => prev.map((locus, idx) => {
+            const img = data.images?.find((img: any) => img.locusIndex === idx);
+            if (img && img.imageUrl) {
+              return { ...locus, image_url: img.imageUrl, imageStatus: 'done' as const };
+            }
+            if (img && img.status === 'generating') {
+              return { ...locus, imageStatus: 'generating' as const };
+            }
+            if (img && img.status === 'failed') {
+              return { ...locus, imageStatus: 'failed' as const };
+            }
+            return locus;
+          }));
+          // All done or all resolved
+          if (done + failed >= expectedCount && generating === 0 && pending === 0) {
+            console.log(`[image-gen] All ${expectedCount} images resolved: ${done} done, ${failed} failed`);
+            return;
+          }
+        }
+      } catch { /* keep polling */ }
+    }
   };
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await api.post('/palaces', {
+      const res: any = await api.post('/palaces', {
         name: palaceName,
         description: description || `A ${template} memory palace`,
         subject: subject || undefined,
@@ -313,6 +360,19 @@ export default function PalaceBuilder() {
         })),
         tags: [template, subject].filter(Boolean),
       });
+      const newPalaceId = res?.id || res?.palaceId;
+
+      // ── Phase 3: Link image generation to saved palace ──────────
+      if (activeJobId && newPalaceId) {
+        const token = await getToken();
+        const API_BASE = import.meta.env.VITE_API_URL || '/api';
+        fetch(`${API_BASE}/loci-jobs/${activeJobId}/link-palace`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ palaceId: newPalaceId }),
+        }).catch(() => {}); // Non-blocking
+      }
+
       toast.success('Palace saved!');
       navigate('/palaces');
     } catch (err) {
